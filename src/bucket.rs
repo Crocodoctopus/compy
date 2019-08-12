@@ -3,10 +3,9 @@ use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, Mutex, MutexGuard, RwLock, RwLockReadGuard,
     RwLockWriteGuard,
 };
+use std::any::TypeId;
 use std::alloc::{alloc, realloc, Layout};
-
 use std::collections::HashMap;
-
 use std::mem::transmute;
 use std::ptr::copy_nonoverlapping;
 
@@ -142,36 +141,6 @@ impl Bucket {
     }
 }
 
-pub trait Lock {
-    type Lock;
-
-    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock>;
-}
-
-impl<A: 'static> Lock for &'_ A {
-    type Lock = Reader<'static, A>; // GAT <'a> in the future
-
-    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock> {
-        unsafe {
-            std::mem::transmute::<Option<Reader<'a, A>>, Option<Reader<'static, A>>>(
-                Reader::<'a, A>::new(bucket, compy_id),
-            )
-        }
-    }
-}
-
-impl<A: 'static> Lock for &'_ mut A {
-    type Lock = Writer<'static, A>; // GAT <'a> in the future
-
-    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock> {
-        unsafe {
-            std::mem::transmute::<Option<Writer<'a, A>>, Option<Writer<'static, A>>>(
-                Writer::<'a, A>::new(bucket, compy_id),
-            )
-        }
-    }
-}
-
 pub struct Reader<'a, T> {
     read: MappedRwLockReadGuard<'a, [T]>,
 }
@@ -200,21 +169,56 @@ impl<'a, T> Writer<'a, T> {
     }
 }
 
-pub trait Get {
+///////////////
+// HELL
+// srsly don't go here
+pub trait Lock {
+    type Lock;
     type Output;
-    fn get<'a>(&'a mut self, index: usize) -> Self::Output;
+    
+    fn base_type() -> TypeId;
+    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock>;
+    fn get<'a>(lock: &'a mut Self::Lock, index: usize) -> Self::Output;
 }
 
-impl<T: 'static> Get for Reader<'_, T> {
+impl<T: 'static> Lock for &T {
+    type Lock = Reader<'static, T>; // GAT <'a> in the future
     type Output = &'static T; // GAT <'a> in the future
-    fn get<'a>(&'a mut self, index: usize) -> Self::Output {
-        unsafe { transmute::<&'a T, &'static T>(&self.read[index]) }
+
+    fn base_type() -> TypeId {
+        TypeId::of::<T>()
+    }
+
+    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock> {
+        unsafe {
+            std::mem::transmute::<Option<Reader<'a, T>>, Option<Reader<'static, T>>>(
+                Reader::<'a, T>::new(bucket, compy_id),
+            )
+        }
+    }
+
+    fn get<'a>(lock: &'a mut Self::Lock, index: usize) ->  Self::Output {
+        unsafe { transmute::<&'a T, &'static T>(&lock.read[index]) }
     }
 }
 
-impl<T: 'static> Get for Writer<'_, T> {
+impl<T: 'static> Lock for &mut T {
+    type Lock = Writer<'static, T>; // GAT <'a> in the future
     type Output = &'static mut T; // GAT <'a> in the future
-    fn get<'a>(&'a mut self, index: usize) -> Self::Output {
-        unsafe { transmute::<&'a mut T, &'static mut T>(&mut self.write[index]) }
+
+    fn base_type() -> TypeId {
+        TypeId::of::<T>()
+    }
+
+    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock> {
+        unsafe {
+            std::mem::transmute::<Option<Writer<'a, T>>, Option<Writer<'static, T>>>(
+                Writer::<'a, T>::new(bucket, compy_id),
+            )
+        }
+    }
+
+    fn get<'a>(lock: &'a mut Self::Lock, index: usize) ->  Self::Output {
+        unsafe { transmute::<&'a mut T, &'static mut T>(&mut lock.write[index]) }
     }
 }

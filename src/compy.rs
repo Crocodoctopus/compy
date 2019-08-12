@@ -1,4 +1,4 @@
-use crate::bucket::{Bucket, Get, Lock};
+use crate::bucket::{Bucket, Lock};
 use parking_lot::RwLock;
 use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
@@ -101,33 +101,19 @@ impl Compy {
 
 ///////
 // interate impls
-pub trait Base {
-    type Base;
-}
-
-impl<T> Base for &T {
-    type Base = T;
-}
-
-impl<T> Base for &mut T {
-    type Base = T;
-}
-
 pub trait CompyIterate<Args, F> {
     fn iterate_mut(&mut self, pkey: CompyId, nkey: CompyId, f: F);
 }
 
 impl<'a, A, B, Func> CompyIterate<(A, B), Func> for Compy
 where
-    A: Lock + Base + 'static,
-    B: Lock + Base + 'static,
-    A::Lock: Get<Output = A>,
-    B::Lock: Get<Output = B>,
+    A: Lock<Output = A> + 'static,
+    B: Lock<Output = B> + 'static,
     Func: Fn(A, B),
 {
     fn iterate_mut(&mut self, pkey: CompyId, nkey: CompyId, f: Func) {
-        let id0 = self.typeid_to_compyid[&TypeId::of::<A::Base>()];
-        let id1 = self.typeid_to_compyid[&TypeId::of::<B::Base>()];
+        let id0 = self.typeid_to_compyid[&A::base_type()];
+        let id1 = self.typeid_to_compyid[&B::base_type()];
 
         for (key, bucket) in self.buckets.get_mut() {
             let bucket = bucket;
@@ -143,8 +129,8 @@ where
 
                 // do the thing
                 for index in 0..len {
-                    let a = a_lock.get(index);
-                    let b = b_lock.get(index);
+                    let a = A::get(&mut a_lock, index);
+                    let b = B::get(&mut b_lock, index);
                     f(a, b);
                 }
             }
