@@ -45,9 +45,9 @@ impl Key {
     pub fn contains(self, key: Key) -> bool {
         self.0 & key.0 == key.0
     }
-    
+
     pub fn excludes(self, key: Key) -> bool {
-    	self.0 & key.0 == 0
+        self.0 & key.0 == 0
     }
 
     pub fn for_each_comp_id<Func: FnMut(CompId)>(self, mut f: Func) {

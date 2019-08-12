@@ -8,6 +8,7 @@ use parking_lot::{
 };
 use std::{any::TypeId, collections::HashMap, mem::transmute};
 
+/// This is only public because traits (Self::Lock) don't allow private members
 pub struct Bucket {
     // current bucket data
     // ids: RwLock<Vec<EntityId>>,
@@ -78,6 +79,7 @@ impl Bucket {
     }
 }
 
+/// This is only public because traits (Self::Lock) don't allow private members
 pub struct Reader<'a, T> {
     read: MappedRwLockReadGuard<'a, [T]>,
 }
@@ -92,6 +94,7 @@ impl<'a, T> Reader<'a, T> {
     }
 }
 
+/// This is only public because traits (Self::Lock) don't allow private members
 pub struct Writer<'a, T> {
     write: MappedRwLockWriteGuard<'a, [T]>,
 }

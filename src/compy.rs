@@ -75,8 +75,7 @@ impl Compy {
     }
 }
 
-///////
-// interate impls
+/// Overloadable function for iterating entities
 pub trait CompyIterate<Args, F> {
     fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: F);
 }
@@ -114,8 +113,7 @@ where
     }
 }
 
-///////
-// insert
+/// Overloadable function for inserting entities
 pub trait CompyInsert<T> {
     fn insert(&self, t: T);
 }

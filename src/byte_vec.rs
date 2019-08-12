@@ -51,7 +51,7 @@ impl ByteVec {
         self.len += 1;
     }
 
-    // drains this vec into another vec
+    // drains this vec into another vec, resulting in this vec becoming empty
     pub(super) unsafe fn draining_push(&mut self, other: &mut ByteVec) {
         // ensure at least self.len elements can fit in other
         let e = other.reserve(self.len);
