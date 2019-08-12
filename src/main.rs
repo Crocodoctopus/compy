@@ -1,0 +1,36 @@
+extern crate parking_lot;
+
+mod bucket;
+pub mod compy;
+mod genvec;
+
+use crate::compy::{CompyBuilder, CompyInsert, CompyIterate};
+use std::any::TypeId;
+
+fn main() {
+    //
+    struct Pos(f32, f32);
+    struct Vel(f32, f32);
+    struct Acc(f32, f32);
+
+    // init Compy
+    let mut compy = CompyBuilder::new()
+        .with::<Pos>()
+        .with::<Vel>()
+        .with::<Acc>()
+        .build();
+
+    // insert an entity
+    compy.insert((Pos(0., 0.), Vel(1., 1.)));
+
+    //
+    compy.update();
+
+    // iterate
+    let pkey = compy.get_key(&[TypeId::of::<Pos>(), TypeId::of::<Vel>()]);
+    let nkey = compy.get_key(&[TypeId::of::<Acc>()]);
+    compy.iterate_mut(pkey, nkey, |pos: &mut Pos, vel: &Vel| {
+        pos.0 += vel.0;
+        pos.1 += vel.1;
+    });
+}
