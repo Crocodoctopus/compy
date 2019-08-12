@@ -2,8 +2,13 @@ extern crate parking_lot;
 
 mod bucket;
 pub mod compy;
+pub mod compy_builder;
+pub mod key;
 
-use crate::compy::{CompyBuilder, CompyInsert, CompyIterate};
+use crate::{
+    compy::{CompyInsert, CompyIterate},
+    compy_builder::CompyBuilder,
+};
 use std::any::TypeId;
 
 fn main() {

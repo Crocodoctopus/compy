@@ -1,22 +1,24 @@
-use crate::compy::CompyId;
+use crate::key::{Key, CompId};
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, Mutex, MutexGuard, RwLock, RwLockReadGuard,
     RwLockWriteGuard,
 };
-use std::any::TypeId;
-use std::alloc::{alloc, realloc, Layout};
-use std::collections::HashMap;
-use std::mem::transmute;
-use std::ptr::copy_nonoverlapping;
+use std::{
+    alloc::{alloc, realloc, Layout},
+    any::TypeId,
+    collections::HashMap,
+    mem::transmute,
+    ptr::copy_nonoverlapping,
+};
 
 pub(super) struct PointerVec {
-    // data ptr
+    // data pointer
     ptr: *mut u8,
 
-    // size of each element
+    // element size (in bytes)
     size: usize,
 
-    // (in elements)
+    // length and capacity (in elements)
     len: usize,
     cap: usize,
 }
@@ -72,23 +74,23 @@ pub struct Bucket {
     // current bucket data
     // ids: RwLock<Vec<EntityId>>,
     len: usize,
-    data: HashMap<CompyId, RwLock<PointerVec>>,
+    data: HashMap<CompId, RwLock<PointerVec>>,
 
     // pending bucket data
-    pdata: Mutex<(usize, HashMap<CompyId, PointerVec>)>,
+    pdata: Mutex<(usize, HashMap<CompId, PointerVec>)>,
 }
 
 impl Bucket {
-    pub(super) fn new(key: CompyId, compyid_to_padding: &HashMap<CompyId, usize>) -> Self {
+    pub(super) fn new(key: Key, compid_to_padding: &HashMap<CompId, usize>) -> Self {
         let mut data = HashMap::new();
         let mut pdata = Mutex::new((0, HashMap::new()));
 
         // for each non-0 bit in ``key``
-        for id in (0..64).map(|v| 1u64 << v).filter(|v| key & v > 0) {
-            let padding = compyid_to_padding[&id];
+        key.for_each_comp_id(|id| {
+            let padding = compid_to_padding[&id];
             data.insert(id, RwLock::new(PointerVec::new(padding)));
             pdata.get_mut().1.insert(id, PointerVec::new(padding));
-        }
+        });
 
         Self {
             len: 0,
@@ -99,11 +101,11 @@ impl Bucket {
 
     pub(super) fn try_read<'a>(
         &'a self,
-        compy_id: CompyId,
+        comp_id: CompId,
     ) -> Option<RwLockReadGuard<'a, PointerVec>> {
         Some(
             self.data
-                .get(&compy_id)
+                .get(&comp_id)
                 .expect("Fatal: No data")
                 .try_read()?,
         )
@@ -111,11 +113,11 @@ impl Bucket {
 
     pub(super) fn try_write<'a>(
         &'a self,
-        compy_id: CompyId,
+        comp_id: CompId,
     ) -> Option<RwLockWriteGuard<'a, PointerVec>> {
         Some(
             self.data
-                .get(&compy_id)
+                .get(&comp_id)
                 .expect("Fatal: No data")
                 .try_write()?,
         )
@@ -125,7 +127,7 @@ impl Bucket {
         self.len
     }
 
-    pub(super) fn insert(&self) -> MutexGuard<(usize, HashMap<CompyId, PointerVec>)> {
+    pub(super) fn insert(&self) -> MutexGuard<(usize, HashMap<CompId, PointerVec>)> {
         self.pdata.lock()
     }
 
@@ -146,8 +148,8 @@ pub struct Reader<'a, T> {
 }
 
 impl<'a, T> Reader<'a, T> {
-    pub(super) fn new(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self> {
-        let read = bucket.try_read(compy_id)?;
+    pub(super) fn new(bucket: &'a Bucket, comp_id: CompId) -> Option<Self> {
+        let read = bucket.try_read(comp_id)?;
         let read = RwLockReadGuard::map(read, |l| unsafe {
             std::slice::from_raw_parts(l.ptr as *const T, l.len)
         });
@@ -160,8 +162,8 @@ pub struct Writer<'a, T> {
 }
 
 impl<'a, T> Writer<'a, T> {
-    pub(super) fn new(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self> {
-        let write = bucket.try_write(compy_id)?;
+    pub(super) fn new(bucket: &'a Bucket, comp_id: CompId) -> Option<Self> {
+        let write = bucket.try_write(comp_id)?;
         let write = RwLockWriteGuard::map(write, |l| unsafe {
             std::slice::from_raw_parts_mut(l.ptr as *mut T, l.len)
         });
@@ -175,9 +177,9 @@ impl<'a, T> Writer<'a, T> {
 pub trait Lock {
     type Lock;
     type Output;
-    
+
     fn base_type() -> TypeId;
-    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock>;
+    fn try_lock<'a>(bucket: &'a Bucket, comp_id: CompId) -> Option<Self::Lock>;
     fn get<'a>(lock: &'a mut Self::Lock, index: usize) -> Self::Output;
 }
 
@@ -189,15 +191,15 @@ impl<T: 'static> Lock for &T {
         TypeId::of::<T>()
     }
 
-    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock> {
+    fn try_lock<'a>(bucket: &'a Bucket, comp_id: CompId) -> Option<Self::Lock> {
         unsafe {
             std::mem::transmute::<Option<Reader<'a, T>>, Option<Reader<'static, T>>>(
-                Reader::<'a, T>::new(bucket, compy_id),
+                Reader::<'a, T>::new(bucket, comp_id),
             )
         }
     }
 
-    fn get<'a>(lock: &'a mut Self::Lock, index: usize) ->  Self::Output {
+    fn get<'a>(lock: &'a mut Self::Lock, index: usize) -> Self::Output {
         unsafe { transmute::<&'a T, &'static T>(&lock.read[index]) }
     }
 }
@@ -210,15 +212,15 @@ impl<T: 'static> Lock for &mut T {
         TypeId::of::<T>()
     }
 
-    fn try_lock<'a>(bucket: &'a Bucket, compy_id: CompyId) -> Option<Self::Lock> {
+    fn try_lock<'a>(bucket: &'a Bucket, comp_id: CompId) -> Option<Self::Lock> {
         unsafe {
             std::mem::transmute::<Option<Writer<'a, T>>, Option<Writer<'static, T>>>(
-                Writer::<'a, T>::new(bucket, compy_id),
+                Writer::<'a, T>::new(bucket, comp_id),
             )
         }
     }
 
-    fn get<'a>(lock: &'a mut Self::Lock, index: usize) ->  Self::Output {
+    fn get<'a>(lock: &'a mut Self::Lock, index: usize) -> Self::Output {
         unsafe { transmute::<&'a mut T, &'static mut T>(&mut lock.write[index]) }
     }
 }
