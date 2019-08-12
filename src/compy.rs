@@ -164,82 +164,11 @@ where
     }
 }
 
-/*
-impl<'a, A, B, L1, L2, ARef, BRef, Func> CompyIterate<'a, (A, ARef, B, BRef, L1, L2), Func> for Compy
-where
-    A: 'static,
-    B: 'static,
-    L1: Get<ARef> + 'a,
-    L2: Get<BRef> + 'a,
-    ARef: IsRef<'a, A> + IntoLock<'a, L1, ARef>,
-    BRef: IsRef<'a, B> + IntoLock<'a, L2, BRef>,
-    Func: FnMut(ARef, BRef),
-{
-    fn iterate(&self, pkey: CompyId, nkey: CompyId, f: Func) {
-        unimplemented!()
-    }
-
-    fn iterate_mut(&'a mut self, pkey: CompyId, nkey: CompyId, mut f: Func) {
-        let id0 = self.typeid_to_compyid[&TypeId::of::<A>()];
-        let id1 = self.typeid_to_compyid[&TypeId::of::<B>()];
-
-        let buckets = self.buckets.get_mut();
-
-        for (key, bucket) in buckets.iter_mut() {
-            if key & pkey == pkey && key & nkey == 0 {
-                unsafe {
-                    let mut l0 = ARef::into_lock(bucket, id0).unwrap();
-                    let mut l1 = BRef::into_lock(bucket, id1).unwrap();
-
-                    let t0 = l0.get(0);
-                    let t1 = l1.get(0);
-
-                    f(t0, t1);
-
-                    //let (len, l0): (usize, <Bucket as TryLock<BRef::Full>>::Lock) = bucket.try_lock(id1).unwrap();
-                }
-            }
-        }
-
-        unimplemented!()
-        /*let id0 = self.typeid_to_compyid[&A::idof()];
-        let id1 = self.typeid_to_compyid[&B::idof()];
-
-        for (key, bucket) in self.buckets.get_mut() {
-            if key & pkey == pkey && key & pkey == 0 {
-                unsafe {
-            }
-        }*/
-    }
-}*/
-
 ///////
 // insert
 pub trait CompyInsert<T> {
     fn insert(&self, t: T);
 }
-
-/*impl<A> CompyInsert<(A,)> for Compy
-where
-    A: 'static,
-{
-    fn insert(&self, ts: &[(A,)]) {
-        // create a key from the types
-        let i0 = self.typeid_to_compyid[&TypeId::of::<A>()];
-        let key = i0;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket(key);
-
-        // insert tuple into the bucket
-        let mut l = bucket.insert_lock();
-        for t in ts {
-            unsafe {
-                l.get_mut(&i0).unwrap().typed_push(t.0);
-            }
-        }
-    }
-}*/
 
 impl<A, B> CompyInsert<(A, B)> for Compy
 where
@@ -263,32 +192,3 @@ where
         }
     }
 }
-
-/*impl<A, B, C> CompyInsert<(A, B, C)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-{
-    fn insert(&self, ts: &[(A, B, C)]) {
-        // create a key from the types
-        let i0 = self.typeid_to_compyid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compyid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compyid[&TypeId::of::<C>()];
-        let key = i0 | i1 | i2;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket(key);
-
-        // insert tuple into the bucket
-        let mut l = bucket.insert_lock();
-        for t in ts {
-            unsafe {
-                l.get_mut(&i0).unwrap().typed_push(t.0);
-                l.get_mut(&i1).unwrap().typed_push(t.1);
-                l.get_mut(&i2).unwrap().typed_push(t.2);
-            }
-        }
-    }
-}
-*/
