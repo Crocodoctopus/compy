@@ -20,13 +20,13 @@ impl CompyBuilder {
     }
 
     pub fn with<T: 'static>(mut self) -> Self {
-        let id = self.id_counter;
-        self.id_counter = self.id_counter.inc();
-
         self.typeid_to_compid
             .insert(TypeId::of::<T>(), self.id_counter);
         self.compid_to_padding
             .insert(self.id_counter, size_of::<T>());
+
+        self.id_counter = self.id_counter.inc();
+
         self
     }
 
