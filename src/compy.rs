@@ -1,6 +1,6 @@
 use crate::{
     bucket::{Bucket, Lock},
-    key::{Key, CompId},
+    key::{CompId, Key},
 };
 use parking_lot::RwLock;
 use std::{
@@ -10,8 +10,7 @@ use std::{
     sync::Arc,
 };
 
-//////////////////////
-// compy
+/// The master type. Cotains all the component/entity data.
 pub struct Compy {
     // type data
     typeid_to_compid: HashMap<TypeId, CompId>,
@@ -33,7 +32,7 @@ impl Compy {
         }
     }
 
-    pub(super) fn get_bucket(&self, key: Key) -> Arc<Bucket> {
+    pub(super) fn get_bucket_or_make(&self, key: Key) -> Arc<Bucket> {
         let r = self.buckets.read();
         match r.get(&key) {
             Some(b) => b.clone(),
@@ -51,11 +50,16 @@ impl Compy {
         }
     }
 
-    /// Gets the key associated with the given type ids.
+    /// Gets the key associated with the given type ids. (deprecated?)
     pub fn get_key(&self, type_ids: &[TypeId]) -> Key {
         type_ids
             .iter()
             .fold(Key::default(), |acc, id| acc + self.typeid_to_compid[id])
+    }
+
+    /// Gets the key associated with the given type id.
+    pub fn get_key_for<T: 'static>(&self) -> Key {
+        Key::from(self.typeid_to_compid[&TypeId::of::<T>()])
     }
 
     /// Performs all pending inserts and deletes. This function is singlethreaded, and requires mutable access to Compy.
@@ -89,7 +93,7 @@ where
 
         for (key, bucket) in self.buckets.get_mut() {
             let bucket = bucket;
-            if key.contains(pkey) && !key.contains(nkey) {
+            if key.contains(pkey) && key.excludes(nkey) {
                 // get the locks
                 let mut a_lock: A::Lock =
                     A::try_lock(bucket, id0).expect("Unreachable for &mut self");
@@ -128,7 +132,7 @@ where
         let key = i0 + i1;
 
         // get the bucket of said key
-        let bucket = self.get_bucket(key);
+        let bucket = self.get_bucket_or_make(key);
 
         // insert tuple into the bucket
         let mut l = bucket.insert();
@@ -138,6 +142,39 @@ where
             }
             if size_of::<B>() > 0 {
                 l.1.get_mut(&i1).unwrap().typed_push(t.1);
+            }
+        }
+        l.0 += 1;
+    }
+}
+
+impl<A, B, C> CompyInsert<(A, B, C)> for Compy
+where
+    A: 'static,
+    B: 'static,
+    C: 'static,
+{
+    fn insert(&self, t: (A, B, C)) {
+        // create a key from the types
+        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
+        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
+        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
+        let key = i0 + i1 + i2;
+
+        // get the bucket of said key
+        let bucket = self.get_bucket_or_make(key);
+
+        // insert tuple into the bucket
+        let mut l = bucket.insert();
+        unsafe {
+            if size_of::<A>() > 0 {
+                l.1.get_mut(&i0).unwrap().typed_push(t.0);
+            }
+            if size_of::<B>() > 0 {
+                l.1.get_mut(&i1).unwrap().typed_push(t.1);
+            }
+            if size_of::<C>() > 0 {
+                l.1.get_mut(&i2).unwrap().typed_push(t.2);
             }
         }
         l.0 += 1;

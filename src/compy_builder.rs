@@ -1,7 +1,4 @@
-use crate::{
-    compy::Compy,
-    key::CompId,
-};
+use crate::{compy::Compy, key::CompId};
 use std::{any::TypeId, collections::HashMap, mem::size_of};
 
 pub struct CompyBuilder {
