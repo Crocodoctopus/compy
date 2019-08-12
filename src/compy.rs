@@ -1,5 +1,5 @@
-use crate::bucket::Bucket;
-use parking_lot::{RwLock, RwLockWriteGuard};
+use crate::bucket::{Bucket, Get, Lock};
+use parking_lot::RwLock;
 use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
 use std::mem::size_of;
@@ -101,43 +101,31 @@ impl Compy {
 
 ///////
 // interate impls
+pub trait Base {
+    type Base;
+}
+
+impl<T> Base for &T {
+    type Base = T;
+}
+
+impl<T> Base for &mut T {
+    type Base = T;
+}
+
 pub trait CompyIterate<Args, F> {
     fn iterate_mut(&mut self, pkey: CompyId, nkey: CompyId, f: F);
 }
 
-use crate::bucket::{Get, Reader, Writer};
-
-pub trait Lock {
-    type Lock;
-    type Base;
-    fn try_lock(bucket: &Bucket, compy_id: CompyId) -> Option<Self::Lock>;
-}
-
-impl<'a, A> Lock for &'a A {
-    type Lock = Reader<'a, A>;
-    type Base = A;
-    fn try_lock(bucket: &Bucket, compy_id: CompyId) -> Option<Self::Lock> {
-        Self::Lock::new(bucket, compy_id)
-    }
-}
-
-impl<'a, A> Lock for &'a mut A {
-    type Lock = Writer<'a, A>;
-    type Base = A;
-    fn try_lock(bucket: &Bucket, compy_id: CompyId) -> Option<Self::Lock> {
-        unimplemented!()
-    }
-}
-
 impl<'a, A, B, Func> CompyIterate<(A, B), Func> for Compy
 where
-    A: Lock + 'static,
-    B: Lock + 'static,
-    A::Lock: Get<'a, Output = A>,
-    B::Lock: Get<'a, Output = B>,
+    A: Lock + Base + 'static,
+    B: Lock + Base + 'static,
+    A::Lock: Get<Output = A>,
+    B::Lock: Get<Output = B>,
     Func: Fn(A, B),
 {
-    fn iterate_mut(&mut self, pkey: CompyId, nkey: CompyId, mut f: Func) {
+    fn iterate_mut(&mut self, pkey: CompyId, nkey: CompyId, f: Func) {
         let id0 = self.typeid_to_compyid[&TypeId::of::<A::Base>()];
         let id1 = self.typeid_to_compyid[&TypeId::of::<B::Base>()];
 
@@ -145,8 +133,10 @@ where
             let bucket = bucket;
             if key & pkey == pkey && key & nkey == 0 {
                 // get the locks
-                let mut a_lock: A::Lock = A::try_lock(bucket, id0).expect("Unreachable for &mut self");
-                let mut b_lock: B::Lock = B::try_lock(bucket, id1).expect("Unreachable for &mut self");
+                let mut a_lock: A::Lock =
+                    A::try_lock(bucket, id0).expect("Unreachable for &mut self");
+                let mut b_lock: B::Lock =
+                    B::try_lock(bucket, id1).expect("Unreachable for &mut self");
 
                 // get the size of the bucket
                 let len = bucket.get_len();
@@ -155,9 +145,7 @@ where
                 for index in 0..len {
                     let a = a_lock.get(index);
                     let b = b_lock.get(index);
-                    //f(a, b);
-                    drop(b);
-                    drop(a);
+                    f(a, b);
                 }
             }
         }
@@ -187,8 +175,9 @@ where
         // insert tuple into the bucket
         let mut l = bucket.insert();
         unsafe {
-            l.get_mut(&i0).unwrap().typed_push(t.0);
-            l.get_mut(&i1).unwrap().typed_push(t.1);
+            l.1.get_mut(&i0).unwrap().typed_push(t.0);
+            l.1.get_mut(&i1).unwrap().typed_push(t.1);
         }
+        l.0 += 1;
     }
 }

@@ -2,15 +2,17 @@ extern crate parking_lot;
 
 mod bucket;
 pub mod compy;
-mod genvec;
 
 use crate::compy::{CompyBuilder, CompyInsert, CompyIterate};
 use std::any::TypeId;
 
 fn main() {
     //
+    #[derive(Debug)]
     struct Pos(f32, f32);
+    #[derive(Debug)]
     struct Vel(f32, f32);
+    #[derive(Debug)]
     struct Acc(f32, f32);
 
     // init Compy
@@ -30,6 +32,7 @@ fn main() {
     let pkey = compy.get_key(&[TypeId::of::<Pos>(), TypeId::of::<Vel>()]);
     let nkey = compy.get_key(&[TypeId::of::<Acc>()]);
     compy.iterate_mut(pkey, nkey, |pos: &mut Pos, vel: &Vel| {
+        println!("{:?}, {:?}", pos, vel);
         pos.0 += vel.0;
         pos.1 += vel.1;
     });
