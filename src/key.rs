@@ -38,15 +38,15 @@ impl Sub<CompId> for CompId {
 }
 
 /// Represents a group of component IDs
-#[derive(Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Eq, Ord, PartialEq, PartialOrd, Debug)]
 pub struct Key(Bits);
 
 impl Key {
-    pub fn contains(self, key: Key) -> bool {
+    pub(super) fn contains(self, key: Key) -> bool {
         self.0 & key.0 == key.0
     }
 
-    pub fn excludes(self, key: Key) -> bool {
+    pub(super) fn excludes(self, key: Key) -> bool {
         self.0 & key.0 == 0
     }
 

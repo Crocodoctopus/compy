@@ -64,6 +64,7 @@ impl Compy {
 
     /// Performs all pending inserts and deletes. This function is singlethreaded, and requires mutable access to Compy.
     pub fn update(&mut self) {
+        println!("LOG: performing compy update");
         for bucket in self
             .buckets
             .get_mut()
@@ -76,15 +77,58 @@ impl Compy {
 }
 
 /// Overloadable function for iterating entities
-pub trait CompyIterate<Args, F> {
+pub trait CompyIterate<Args, F, R> {
     fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: F);
+    //fn iterate_alive_mut(&mut self, pkey: Key, nkey: Key, f: F);
+    //fn iterate_dead_mut(&mut self, pkey: Key, nkey: Key, f: F);
 }
 
-impl<'a, A, B, Func> CompyIterate<(A, B), Func> for Compy
+impl<'a, A, Func> CompyIterate<(A,), Func, bool> for Compy
+where
+    A: Lock<Output = A> + 'static,
+    Func: Fn(A) -> bool,
+{
+    fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: Func) {
+        println!("LOG: iterate_mut<A> called for p:{:?} n:{:?}", pkey, nkey);
+
+        let id0 = self.typeid_to_compid[&A::base_type()];
+        let mut indices = Vec::<usize>::with_capacity(1000);
+
+        for (key, bucket) in self.buckets.get_mut() {
+            let bucket = bucket;
+            if key.contains(pkey) && key.excludes(nkey) {
+                println!("LOG:   bucket found; k: {:?}", key);
+
+                // get the locks
+                let mut a_lock: A::Lock =
+                    A::try_lock(bucket, id0).expect("Unreachable for &mut self");
+
+                // get the size of the bucket
+                let len = bucket.get_len();
+
+                // do the thing
+                indices.clear();
+                for index in 0..len {
+                    let a = A::get(&mut a_lock, index);
+                    if f(a) {
+                        indices.push(index);
+                    }
+                }
+                if indices.len() > 0 {
+                    println!("LOG:   indices scheduled for delete: {:?}", indices);
+                    bucket.remove(&mut indices);
+                    indices.clear();
+                }
+            }
+        }
+    }
+}
+
+impl<'a, A, B, Func> CompyIterate<(A, B), Func, ()> for Compy
 where
     A: Lock<Output = A> + 'static,
     B: Lock<Output = B> + 'static,
-    Func: Fn(A, B),
+    Func: Fn(A, B) -> (),
 {
     fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: Func) {
         let id0 = self.typeid_to_compid[&A::base_type()];
@@ -116,6 +160,29 @@ where
 /// Overloadable function for inserting entities
 pub trait CompyInsert<T> {
     fn insert(&self, t: T);
+}
+
+impl<A> CompyInsert<(A,)> for Compy
+where
+    A: 'static,
+{
+    fn insert(&self, t: (A,)) {
+        // create a key from the types
+        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
+        let key = Key::from(i0);
+
+        // get the bucket of said key
+        let bucket = self.get_bucket_or_make(key);
+
+        // insert tuple into the bucket
+        let mut l = bucket.insert();
+        unsafe {
+            if size_of::<A>() > 0 {
+                l.1.get_mut(&i0).unwrap().typed_push(t.0);
+            }
+        }
+        l.0 += 1;
+    }
 }
 
 impl<A, B> CompyInsert<(A, B)> for Compy

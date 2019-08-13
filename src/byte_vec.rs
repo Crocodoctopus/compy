@@ -61,4 +61,30 @@ impl ByteVec {
         other.len += self.len;
         self.len = 0;
     }
+
+    // removes the indices given, provided that they're sorted
+    // this function requires the slice's last value to be the length of the array being removed from
+    pub(super) unsafe fn sorted_remove(&mut self, indices: &[usize]) {
+        // index to copy data to
+        let mut copy_to = indices[0];
+
+        //
+        let mut last = indices[0];
+        for &index in indices.iter().skip(1) {
+            // if not a consecutive index
+            if last + 1 != index {
+                // copy (last, index) to copy_to
+                let mov_len = index - last - 1;
+                std::ptr::copy(
+                    self.ptr.add(last * self.size + self.size),
+                    self.ptr.add(copy_to * self.size),
+                    mov_len * self.size,
+                );
+                copy_to += mov_len;
+            }
+            last = index;
+        }
+
+        self.len -= indices.len() - 1;
+    }
 }

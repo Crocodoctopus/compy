@@ -16,6 +16,7 @@ pub struct Bucket {
     data: HashMap<CompId, RwLock<ByteVec>>,
 
     // pending bucket data
+    prem: Mutex<Vec<usize>>,
     pdata: Mutex<(usize, HashMap<CompId, ByteVec>)>,
 }
 
@@ -34,6 +35,7 @@ impl Bucket {
         Self {
             len: 0,
             data,
+            prem: Mutex::new(Vec::new()),
             pdata,
         }
     }
@@ -67,17 +69,102 @@ impl Bucket {
         self.pdata.lock()
     }
 
-    pub(super) fn update(&mut self) {
-        let (count, hm) = self.pdata.get_mut();
-        for (id, pv) in hm {
-            let other = self.data.get_mut(id).unwrap().get_mut();
-            unsafe {
-                pv.draining_push(other);
+    pub(super) fn remove(&self, indices: &mut Vec<usize>) {
+        // merge indices into prem, discard duplicates
+        let mut v0 = self.prem.lock();
+        let v1 = indices;
+
+        // generate a new vec
+        let mut new_v = Vec::with_capacity(v0.len() + v1.len());
+
+        // add a "cap" to both vectors
+        v0.push(usize::max_value());
+        v1.push(usize::max_value());
+
+        // merge
+        let mut index0 = 0;
+        let mut index1 = 0;
+        let mut last = usize::max_value();
+        loop {
+            let t0 = v0[index0];
+            let t1 = v1[index1];
+
+            // if v0 is smaller
+            if t0 < t1 {
+                // if the last value isn't v0
+                if last != t0 {
+                    new_v.push(t0);
+                    last = t0;
+                }
+
+                // inc
+                index0 += 1;
+
+                continue;
             }
+
+            // if v1 is smaller, and not a "cap"
+            if t1 < t0 && t1 != usize::max_value() {
+                // if the last value isn't v0
+                if last != t1 {
+                    new_v.push(t1);
+                    last = t1;
+                }
+
+                // inc
+                index1 += 1;
+
+                continue;
+            }
+
+            // if we make it this far, we done
+            break;
         }
-        self.len += *count;
+
+        // replace v0
+        *v0 = new_v;
+    }
+
+    pub(super) fn update(&mut self) {
+        // remove
+        let prem = self.prem.get_mut();
+        if prem.len() > 0 {
+            // pushes the "cap" onto the remove slice
+            prem.push(self.len);
+            println!("LOG:   deleting indices {:?}", prem);
+
+            // for each data array, remove the indices in prem
+            for bvec in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
+                unsafe {
+                    bvec.sorted_remove(prem);
+                }
+            }
+
+            //
+            self.len -= prem.len() - 1;
+            prem.clear();
+        }
+
+        // add
+        let (count, hm) = self.pdata.get_mut();
+        if *count > 0 {
+            for (id, pv) in hm {
+                let other = self.data.get_mut(id).unwrap().get_mut();
+                unsafe {
+                    pv.draining_push(other);
+                }
+            }
+            self.len += *count;
+            *count = 0;
+        }
     }
 }
+
+// 3 3 3 3 3 3
+// 1 2 3 4 6
+
+// last: 6
+// 1 2 3 4 6
 
 /// This is only public because traits (Self::Lock) don't allow private members
 pub struct Reader<'a, T> {
