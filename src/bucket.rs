@@ -52,6 +52,10 @@ impl Bucket {
             // the size associated with this id
             let size = compid_to_size[&id];
 
+            if size == 0 {
+                return;
+            }
+
             // allocate memory
             let (data_ptr, ins_ptr) = unsafe {
                 let data_ptr = alloc(Layout::from_size_align_unchecked(starting_cap * size, 64));
@@ -101,15 +105,17 @@ impl Bucket {
         }
 
         // insert
-        for &(comp_id, data_ptr) in data {
-            let (ptr, size) = hmap[&comp_id];
-            unsafe {
-                let src: *const u8 = data_ptr;
-                let dst: *mut u8 = ptr.add(*len * size);
+        data.iter()
+            .filter_map(|(comp_id, src_ptr)| {
+                hmap.get(comp_id)
+                    .and_then(|(dst_ptr, size)| Some((src_ptr, dst_ptr, size)))
+            })
+            .for_each(|(&src_ptr, &dst_ptr, &size)| unsafe {
+                let src: *const u8 = src_ptr;
+                let dst: *mut u8 = dst_ptr.add(*len * size);
                 let count = size;
                 copy_nonoverlapping(src, dst, count);
-            };
-        }
+            });
         *len += 1;
     }
 

@@ -5,13 +5,13 @@ pub mod compy;
 pub mod compy_builder;
 pub mod key;
 
-use crate::{
-    compy::{CompyInsert, CompyIterate},
-    compy_builder::CompyBuilder,
-    key::Key,
-};
+/*fn main() {
+    use crate::{
+        compy::{CompyInsert, CompyIterate},
+        compy_builder::CompyBuilder,
+        key::Key,
+    };
 
-fn main() {
     // :shrug:
     #[derive(Debug)]
     struct Pos(f32, f32);
@@ -63,3 +63,4 @@ fn main() {
         println!("O {:?}", rem);
     });
 }
+*/
