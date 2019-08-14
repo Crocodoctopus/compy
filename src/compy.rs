@@ -31,6 +31,10 @@ impl Compy {
         }
     }
 
+    pub fn entity_count(&self) -> usize {
+        self.buckets.read().values().fold(0, |acc, bucket| acc + bucket.get_len())
+    }
+
     pub(super) fn get_bucket_or_make(&self, key: Key) -> Arc<Bucket> {
         let r = self.buckets.read();
         match r.get(&key) {
@@ -63,7 +67,6 @@ impl Compy {
 
     /// Performs all pending inserts and deletes. This function is singlethreaded, and requires mutable access to Compy.
     pub fn update(&mut self) {
-        println!("LOG: performing compy update");
         for bucket in self
             .buckets
             .get_mut()
@@ -86,19 +89,15 @@ pub trait CompyIterate<Args, F, R> {
 impl<'a, A, Func> CompyIterate<(A,), Func, bool> for Compy
 where
     A: Lock<Output = A> + 'static,
-    Func: Fn(A) -> bool,
+    Func: FnMut(A) -> bool,
 {
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: Func) {
-        println!("LOG: iterate_mut<A> called for p:{:?} n:{:?}", pkey, nkey);
-
+    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
         let id0 = self.typeid_to_compid[&A::base_type()];
-        let mut indices = Vec::<usize>::with_capacity(1000);
+        let mut indices = Vec::<usize>::new();
 
         for (key, bucket) in self.buckets.get_mut() {
             let bucket = bucket;
             if key.contains(pkey) && key.excludes(nkey) {
-                println!("LOG:   bucket found; k: {:?}", key);
-
                 // get the locks
                 let mut a_lock: A::Lock =
                     A::try_lock(bucket, id0).expect("Unreachable for &mut self");
@@ -115,7 +114,6 @@ where
                     }
                 }
                 if indices.len() > 0 {
-                    println!("LOG:   indices scheduled for delete: {:?}", indices);
                     bucket.flag_for_removal(&mut indices);
                     indices.clear();
                 }
@@ -124,13 +122,13 @@ where
     }
 }
 
-impl<'a, A, B, Func> CompyIterate<(A, B), Func, ()> for Compy
+/*impl<'a, A, B, Func> CompyIterate<(A, B), Func, ()> for Compy
 where
     A: Lock<Output = A> + 'static,
     B: Lock<Output = B> + 'static,
-    Func: Fn(A, B) -> (),
+    Func: FnMut(A, B) -> (),
 {
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: Func) {
+    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
         let id0 = self.typeid_to_compid[&A::base_type()];
         let id1 = self.typeid_to_compid[&B::base_type()];
 
@@ -151,6 +149,94 @@ where
                     let a = A::get(&mut a_lock, index);
                     let b = B::get(&mut b_lock, index);
                     f(a, b);
+                }
+            }
+        }
+    }
+}*/
+
+impl<'a, A, B, Func> CompyIterate<(A, B), Func, bool> for Compy
+where
+    A: Lock<Output = A> + 'static,
+    B: Lock<Output = B> + 'static,
+    Func: FnMut(A, B) -> bool,
+{
+    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
+        let id0 = self.typeid_to_compid[&A::base_type()];
+        let id1 = self.typeid_to_compid[&B::base_type()];
+        let mut indices = Vec::<usize>::new();
+
+        for (key, bucket) in self.buckets.get_mut() {
+            let bucket = bucket;
+            if key.contains(pkey) && key.excludes(nkey) {
+                // get the locks
+                let mut a_lock =
+                    A::try_lock(bucket, id0).expect("Unreachable for &mut self");
+                let mut b_lock =
+                    B::try_lock(bucket, id1).expect("Unreachable for &mut self");
+
+
+                // get the size of the bucket
+                let len = bucket.get_len();
+
+                // do the thing
+                indices.clear();
+                for index in 0..len {
+                    let a = A::get(&mut a_lock, index);
+                    let b = B::get(&mut b_lock, index);
+                    if f(a, b) {
+                        indices.push(index);
+                    }
+                }
+                if indices.len() > 0 {
+                    bucket.flag_for_removal(&mut indices);
+                    indices.clear();
+                }
+            }
+        }
+    }
+}
+
+impl<'a, A, B, C, Func> CompyIterate<(A, B, C), Func, bool> for Compy
+where
+    A: Lock<Output = A> + 'static,
+    B: Lock<Output = B> + 'static,
+    C: Lock<Output = C> + 'static,
+    Func: FnMut(A, B, C) -> bool,
+{
+    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
+        let id0 = self.typeid_to_compid[&A::base_type()];
+        let id1 = self.typeid_to_compid[&B::base_type()];
+        let id2 = self.typeid_to_compid[&C::base_type()];
+        let mut indices = Vec::<usize>::new();
+
+        for (key, bucket) in self.buckets.get_mut() {
+            let bucket = bucket;
+            if key.contains(pkey) && key.excludes(nkey) {
+                // get the locks
+                let mut a_lock =
+                    A::try_lock(bucket, id0).expect("Unreachable for &mut self");
+                let mut b_lock =
+                    B::try_lock(bucket, id1).expect("Unreachable for &mut self");
+                let mut c_lock =
+                    C::try_lock(bucket, id2).expect("Unreachable for &mut self");
+
+                // get the size of the bucket
+                let len = bucket.get_len();
+
+                // do the thing
+                indices.clear();
+                for index in 0..len {
+                    let a = A::get(&mut a_lock, index);
+                    let b = B::get(&mut b_lock, index);
+                    let c = C::get(&mut c_lock, index);
+                    if f(a, b, c) {
+                        indices.push(index);
+                    }
+                }
+                if indices.len() > 0 {
+                    bucket.flag_for_removal(&mut indices);
+                    indices.clear();
                 }
             }
         }

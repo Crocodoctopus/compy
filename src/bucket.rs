@@ -92,13 +92,13 @@ impl Bucket {
         // #UNTESTED
         if *len + 1 > *cap {
             let new_cap = (*len + 1) * 2;
-            for &mut (mut data_ptr, size) in hmap.values_mut() {
+            for (data_ptr, size) in hmap.values_mut() {
                 unsafe {
-                    data_ptr = realloc(
-                        data_ptr,
-                        Layout::from_size_align_unchecked(*cap * size, 64),
-                        new_cap * size,
-                    );
+                    *data_ptr = realloc(
+                        *data_ptr,
+                        Layout::from_size_align_unchecked(*cap * *size, 64),
+                        new_cap * *size,
+                    );  
                 }
             }
             *cap = new_cap;
@@ -128,16 +128,16 @@ impl Bucket {
         // #UNTESTED
         if self.len + *len > self.cap {
             let new_cap = (self.len + *len) * 2;
-            for &mut (mut data_ptr, size) in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
+            for (data_ptr, size) in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
                 unsafe {
-                    data_ptr = realloc(
-                        data_ptr,
-                        Layout::from_size_align_unchecked(self.cap * size, 64),
-                        new_cap * size,
+                    *data_ptr = realloc(
+                        *data_ptr,
+                        Layout::from_size_align_unchecked(self.cap * *size, 64),
+                        new_cap * *size,
                     );
                 }
-                self.cap = new_cap;
             }
+            self.cap = new_cap;
         }
 
         // drain
@@ -152,7 +152,7 @@ impl Bucket {
                     let src: *const u8 = ins_ptr;
                     let dst: *mut u8 = data_ptr.add(self.len * size);
                     let count = *len * size;
-                    copy_nonoverlapping(src, dst, count);
+                    copy(src, dst, count);
                 }
             }
 
