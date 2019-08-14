@@ -6,7 +6,6 @@ use parking_lot::RwLock;
 use std::{
     any::TypeId,
     collections::{BTreeMap, HashMap},
-    mem::size_of,
     sync::Arc,
 };
 
@@ -14,7 +13,7 @@ use std::{
 pub struct Compy {
     // type data
     typeid_to_compid: HashMap<TypeId, CompId>,
-    compid_to_padding: HashMap<CompId, usize>,
+    compid_to_size: HashMap<CompId, usize>,
 
     // buckets
     buckets: RwLock<BTreeMap<Key, Arc<Bucket>>>,
@@ -23,11 +22,11 @@ pub struct Compy {
 impl Compy {
     pub(super) fn new(
         typeid_to_compid: HashMap<TypeId, CompId>,
-        compid_to_padding: HashMap<CompId, usize>,
+        compid_to_size: HashMap<CompId, usize>,
     ) -> Self {
         Self {
             typeid_to_compid,
-            compid_to_padding,
+            compid_to_size,
             buckets: RwLock::new(BTreeMap::new()),
         }
     }
@@ -41,7 +40,7 @@ impl Compy {
                 drop(r);
 
                 // generate a new bucket
-                let b = Arc::new(Bucket::new(key, &self.compid_to_padding));
+                let b = Arc::new(Bucket::new(key, &self.compid_to_size));
 
                 // insert the bucket, return a clone of the Arc
                 self.buckets.write().insert(key, b.clone());
@@ -71,7 +70,8 @@ impl Compy {
             .values_mut()
             .map(|b| Arc::get_mut(b).unwrap())
         {
-            bucket.update();
+            bucket.remove_pending();
+            bucket.insert_pending();
         }
     }
 }
@@ -116,7 +116,7 @@ where
                 }
                 if indices.len() > 0 {
                     println!("LOG:   indices scheduled for delete: {:?}", indices);
-                    bucket.remove(&mut indices);
+                    bucket.flag_for_removal(&mut indices);
                     indices.clear();
                 }
             }
@@ -175,13 +175,8 @@ where
         let bucket = self.get_bucket_or_make(key);
 
         // insert tuple into the bucket
-        let mut l = bucket.insert();
-        unsafe {
-            if size_of::<A>() > 0 {
-                l.1.get_mut(&i0).unwrap().typed_push(t.0);
-            }
-        }
-        l.0 += 1;
+        bucket.insert(&[(i0, &t.0 as *const _ as *const _)]);
+        std::mem::forget(t);
     }
 }
 
@@ -200,16 +195,11 @@ where
         let bucket = self.get_bucket_or_make(key);
 
         // insert tuple into the bucket
-        let mut l = bucket.insert();
-        unsafe {
-            if size_of::<A>() > 0 {
-                l.1.get_mut(&i0).unwrap().typed_push(t.0);
-            }
-            if size_of::<B>() > 0 {
-                l.1.get_mut(&i1).unwrap().typed_push(t.1);
-            }
-        }
-        l.0 += 1;
+        bucket.insert(&[
+            (i0, &t.0 as *const A as *const u8),
+            (i1, &t.1 as *const B as *const u8),
+        ]);
+        std::mem::forget(t);
     }
 }
 
@@ -230,18 +220,11 @@ where
         let bucket = self.get_bucket_or_make(key);
 
         // insert tuple into the bucket
-        let mut l = bucket.insert();
-        unsafe {
-            if size_of::<A>() > 0 {
-                l.1.get_mut(&i0).unwrap().typed_push(t.0);
-            }
-            if size_of::<B>() > 0 {
-                l.1.get_mut(&i1).unwrap().typed_push(t.1);
-            }
-            if size_of::<C>() > 0 {
-                l.1.get_mut(&i2).unwrap().typed_push(t.2);
-            }
-        }
-        l.0 += 1;
+        bucket.insert(&[
+            (i0, &t.0 as *const _ as *const _),
+            (i1, &t.1 as *const _ as *const _),
+            (i2, &t.2 as *const _ as *const _),
+        ]);
+        std::mem::forget(t);
     }
 }

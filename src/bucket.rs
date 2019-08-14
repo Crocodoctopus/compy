@@ -1,77 +1,165 @@
-use crate::{
-    byte_vec::ByteVec,
-    key::{CompId, Key},
-};
+use crate::key::{CompId, Key};
 use parking_lot::{
-    MappedRwLockReadGuard, MappedRwLockWriteGuard, Mutex, MutexGuard, RwLock, RwLockReadGuard,
-    RwLockWriteGuard,
+    MappedRwLockReadGuard, MappedRwLockWriteGuard, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
-use std::{any::TypeId, collections::HashMap, mem::transmute};
+use std::{
+    alloc::{alloc, dealloc, realloc, Layout},
+    any::TypeId,
+    collections::HashMap,
+    mem::transmute,
+    ptr::{copy, copy_nonoverlapping},
+};
 
 /// This is only public because traits (Self::Lock) don't allow private members
 pub struct Bucket {
-    // current bucket data
-    // ids: RwLock<Vec<EntityId>>,
+    // Bucket data
     len: usize,
-    data: HashMap<CompId, RwLock<ByteVec>>,
+    cap: usize,
+    data: HashMap<CompId, RwLock<(*mut u8, usize)>>,
 
-    // pending bucket data
-    prem: Mutex<Vec<usize>>,
-    pdata: Mutex<(usize, HashMap<CompId, ByteVec>)>,
+    // Entities pending deletion, stored as ordered indices
+    // Mutex<Vec<id>>
+    rem: Mutex<Vec<usize>>,
+
+    // Entities pending insertion
+    // Mutex<(len, cap, HashMap<id, (ptr, size)>)>
+    ins: Mutex<(usize, usize, HashMap<CompId, (*mut u8, usize)>)>,
+}
+
+impl Drop for Bucket {
+    fn drop(&mut self) {
+        let it1 = self.data.values_mut().map(|rw| &*rw.get_mut());
+        let it2 = self.ins.get_mut().2.values();
+        for &(ptr, size) in it1.chain(it2) {
+            unsafe {
+                dealloc(ptr, Layout::from_size_align_unchecked(size * self.cap, 64));
+            }
+        }
+    }
 }
 
 impl Bucket {
-    pub(super) fn new(key: Key, compid_to_padding: &HashMap<CompId, usize>) -> Self {
-        let mut data = HashMap::new();
-        let mut pdata = Mutex::new((0, HashMap::new()));
+    // Constructs a new Bucket based on the given key
+    pub(super) fn new(key: Key, compid_to_size: &HashMap<CompId, usize>) -> Self {
+        // some starting parameters
+        let starting_len = 0;
+        let starting_cap = 32;
 
-        // for each non-0 bit in ``key``
+        // construct the data/ins hashmaps
+        let mut data = HashMap::new();
+        let mut ins = HashMap::new();
         key.for_each_comp_id(|id| {
-            let padding = compid_to_padding[&id];
-            data.insert(id, RwLock::new(ByteVec::new(padding)));
-            pdata.get_mut().1.insert(id, ByteVec::new(padding));
+            // the size associated with this id
+            let size = compid_to_size[&id];
+
+            // allocate memory
+            let (data_ptr, ins_ptr) = unsafe {
+                let data_ptr = alloc(Layout::from_size_align_unchecked(starting_cap * size, 64));
+                let ins_ptr = alloc(Layout::from_size_align_unchecked(starting_cap * size, 64));
+                (data_ptr, ins_ptr)
+            };
+            data.insert(id, RwLock::new((data_ptr, size)));
+            ins.insert(id, (ins_ptr, size));
         });
 
+        // build the Bucket
         Self {
-            len: 0,
+            len: starting_len,
+            cap: starting_cap,
             data,
-            prem: Mutex::new(Vec::new()),
-            pdata,
+            rem: Mutex::new(Vec::new()),
+            ins: Mutex::new((starting_len, starting_cap, ins)),
         }
     }
 
-    pub(super) fn try_read<'a>(&'a self, comp_id: CompId) -> Option<RwLockReadGuard<'a, ByteVec>> {
-        Some(
-            self.data
-                .get(&comp_id)
-                .expect("Fatal: No data")
-                .try_read()?,
-        )
-    }
-
-    pub(super) fn try_write<'a>(
-        &'a self,
-        comp_id: CompId,
-    ) -> Option<RwLockWriteGuard<'a, ByteVec>> {
-        Some(
-            self.data
-                .get(&comp_id)
-                .expect("Fatal: No data")
-                .try_write()?,
-        )
-    }
-
+    // Pretty self explanatory
     pub(super) fn get_len(&self) -> usize {
         self.len
     }
 
-    pub(super) fn insert(&self) -> MutexGuard<(usize, HashMap<CompId, ByteVec>)> {
-        self.pdata.lock()
+    // Inserts an entity (pending_insert?)
+    // #[TODO: Better name]
+    pub(super) fn insert(&self, data: &[(CompId, *const u8)]) {
+        // extract
+        let mut lock = self.ins.lock();
+        let (len, cap, hmap) = &mut *lock;
+
+        // extend capacities of the pending entity data if needed
+        // #UNTESTED
+        if *len + 1 > *cap {
+            let new_cap = (*len + 1) * 2;
+            for &mut (mut data_ptr, size) in hmap.values_mut() {
+                unsafe {
+                    data_ptr = realloc(
+                        data_ptr,
+                        Layout::from_size_align_unchecked(*cap * size, 64),
+                        new_cap * size,
+                    );
+                }
+            }
+            *cap = new_cap;
+        }
+
+        // insert
+        for &(comp_id, data_ptr) in data {
+            let (ptr, size) = hmap[&comp_id];
+            unsafe {
+                let src: *const u8 = data_ptr;
+                let dst: *mut u8 = ptr.add(*len * size);
+                let count = size;
+                copy_nonoverlapping(src, dst, count);
+            };
+        }
+        *len += 1;
     }
 
-    pub(super) fn remove(&self, indices: &mut Vec<usize>) {
+    pub(super) fn insert_pending(&mut self) {
+        // extract
+        let lock = self.ins.get_mut();
+        let (len, _, hmap) = &mut *lock;
+
+        // extend capacities of the entity data if needed
+        // #UNTESTED
+        if self.len + *len > self.cap {
+            let new_cap = (self.len + *len) * 2;
+            for &mut (mut data_ptr, size) in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
+                unsafe {
+                    data_ptr = realloc(
+                        data_ptr,
+                        Layout::from_size_align_unchecked(self.cap * size, 64),
+                        new_cap * size,
+                    );
+                }
+                self.cap = new_cap;
+            }
+        }
+
+        // drain
+        if *len > 0 {
+            // for each pair in pending insert hashmap
+            for (&comp_id, &mut (ins_ptr, size)) in hmap {
+                // get the data pointer in the cooresponding real data hashmap
+                let data_ptr = self.data.get_mut(&comp_id).expect("ERGAS").get_mut().0;
+
+                // drain all the data in the pending insert hashmap into the real hash map
+                unsafe {
+                    let src: *const u8 = ins_ptr;
+                    let dst: *mut u8 = data_ptr.add(self.len * size);
+                    let count = *len * size;
+                    copy_nonoverlapping(src, dst, count);
+                }
+            }
+
+            // add the drained data len to the real len, set drained len to 0
+            self.len += *len;
+            *len = 0;
+        }
+    }
+
+    // Flags an index for removal. Actually removal occurs with the associated remove_pending
+    pub(super) fn flag_for_removal(&self, indices: &mut Vec<usize>) {
         // merge indices into prem, discard duplicates
-        let mut v0 = self.prem.lock();
+        let mut v0 = self.rem.lock();
         let v1 = indices;
 
         // generate a new vec
@@ -125,74 +213,40 @@ impl Bucket {
         *v0 = new_v;
     }
 
-    pub(super) fn update(&mut self) {
-        // remove
-        let prem = self.prem.get_mut();
-        if prem.len() > 0 {
-            // pushes the "cap" onto the remove slice
-            prem.push(self.len);
-            println!("LOG:   deleting indices {:?}", prem);
+    pub(super) fn remove_pending(&mut self) {
+        let indices = self.rem.get_mut();
+        if indices.len() > 0 {
+            // pushes a "cap" onto the removal vec
+            indices.push(self.len);
 
-            // for each data array, remove the indices in prem
-            for bvec in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
-                unsafe {
-                    bvec.sorted_remove(prem);
+            // for each data array, remove the indices in indices
+            for &mut (ptr, size) in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
+                // index we're moving the data slice to
+                let mut copy_to = indices[0];
+
+                // "for each data slice"
+                let mut last = indices[0];
+                for &index in indices.iter().skip(1) {
+                    // if not a consecutive index
+                    if last + 1 != index {
+                        let mov_len = index - last - 1;
+                        unsafe {
+                            copy(
+                                ptr.add(last * size + size),
+                                ptr.add(copy_to * size),
+                                mov_len * size,
+                            );
+                        }
+                        copy_to += mov_len;
+                    }
+                    last = index;
                 }
             }
 
             //
-            self.len -= prem.len() - 1;
-            prem.clear();
+            self.len -= indices.len() - 1;
+            indices.clear();
         }
-
-        // add
-        let (count, hm) = self.pdata.get_mut();
-        if *count > 0 {
-            for (id, pv) in hm {
-                let other = self.data.get_mut(id).unwrap().get_mut();
-                unsafe {
-                    pv.draining_push(other);
-                }
-            }
-            self.len += *count;
-            *count = 0;
-        }
-    }
-}
-
-// 3 3 3 3 3 3
-// 1 2 3 4 6
-
-// last: 6
-// 1 2 3 4 6
-
-/// This is only public because traits (Self::Lock) don't allow private members
-pub struct Reader<'a, T> {
-    read: MappedRwLockReadGuard<'a, [T]>,
-}
-
-impl<'a, T> Reader<'a, T> {
-    pub(super) fn new(bucket: &'a Bucket, comp_id: CompId) -> Option<Self> {
-        let read = bucket.try_read(comp_id)?;
-        let read = RwLockReadGuard::map(read, |l| unsafe {
-            std::slice::from_raw_parts(l.ptr as *const T, l.len)
-        });
-        Some(Self { read })
-    }
-}
-
-/// This is only public because traits (Self::Lock) don't allow private members
-pub struct Writer<'a, T> {
-    write: MappedRwLockWriteGuard<'a, [T]>,
-}
-
-impl<'a, T> Writer<'a, T> {
-    pub(super) fn new(bucket: &'a Bucket, comp_id: CompId) -> Option<Self> {
-        let write = bucket.try_write(comp_id)?;
-        let write = RwLockWriteGuard::map(write, |l| unsafe {
-            std::slice::from_raw_parts_mut(l.ptr as *mut T, l.len)
-        });
-        Some(Self { write })
     }
 }
 
@@ -209,7 +263,7 @@ pub trait Lock {
 }
 
 impl<T: 'static> Lock for &T {
-    type Lock = Reader<'static, T>; // GAT <'a> in the future
+    type Lock = MappedRwLockReadGuard<'static, *mut u8>; // GAT <'a> in the future
     type Output = &'static T; // GAT <'a> in the future
 
     fn base_type() -> TypeId {
@@ -217,20 +271,21 @@ impl<T: 'static> Lock for &T {
     }
 
     fn try_lock<'a>(bucket: &'a Bucket, comp_id: CompId) -> Option<Self::Lock> {
-        unsafe {
-            std::mem::transmute::<Option<Reader<'a, T>>, Option<Reader<'static, T>>>(
-                Reader::<'a, T>::new(bucket, comp_id),
-            )
-        }
+        let read = bucket.data.get(&comp_id).expect("ERROR").try_read()?;
+        let read = RwLockReadGuard::map(read, |(ptr, _)| ptr);
+
+        let out: MappedRwLockReadGuard<'a, *mut u8> = read;
+        let out: MappedRwLockReadGuard<'static, *mut u8> = unsafe { transmute(out) };
+        Some(out)
     }
 
     fn get<'a>(lock: &'a mut Self::Lock, index: usize) -> Self::Output {
-        unsafe { transmute::<&'a T, &'static T>(&lock.read[index]) }
+        unsafe { &*(*(lock as &*mut u8) as *const T).add(index) }
     }
 }
 
 impl<T: 'static> Lock for &mut T {
-    type Lock = Writer<'static, T>; // GAT <'a> in the future
+    type Lock = MappedRwLockWriteGuard<'static, *mut u8>; // GAT <'a> in the future
     type Output = &'static mut T; // GAT <'a> in the future
 
     fn base_type() -> TypeId {
@@ -238,14 +293,15 @@ impl<T: 'static> Lock for &mut T {
     }
 
     fn try_lock<'a>(bucket: &'a Bucket, comp_id: CompId) -> Option<Self::Lock> {
-        unsafe {
-            std::mem::transmute::<Option<Writer<'a, T>>, Option<Writer<'static, T>>>(
-                Writer::<'a, T>::new(bucket, comp_id),
-            )
-        }
+        let write = bucket.data.get(&comp_id).expect("ERROR").try_write()?;
+        let write = RwLockWriteGuard::map(write, |(ptr, _)| ptr);
+
+        let out: MappedRwLockWriteGuard<'a, *mut u8> = write;
+        let out: MappedRwLockWriteGuard<'static, *mut u8> = unsafe { transmute(out) };
+        Some(out)
     }
 
     fn get<'a>(lock: &'a mut Self::Lock, index: usize) -> Self::Output {
-        unsafe { transmute::<&'a mut T, &'static mut T>(&mut lock.write[index]) }
+        unsafe { &mut *(*(lock as &mut *mut u8) as *mut T).add(index) }
     }
 }

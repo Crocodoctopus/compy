@@ -1,7 +1,6 @@
 extern crate parking_lot;
 
 mod bucket;
-mod byte_vec;
 pub mod compy;
 pub mod compy_builder;
 pub mod key;
@@ -44,7 +43,6 @@ fn main() {
     compy.insert((Rem(true, 0),));
     compy.insert((Rem(false, 1),));
     compy.insert((Rem(true, 2),));
-    // expected (0, 2)
 
     // inserts/delete all pending entities
     compy.update();
@@ -54,12 +52,14 @@ fn main() {
     // arg2: what we're excluding
     // arg3: the closure to operate and the types.
     //  locks are automatically retrieved based on the mutability of the parameter
-    compy.iterate_mut(rem, none, |rem: &Rem| rem.0);
+    compy.iterate_mut(rem, none, |rem: &Rem| {
+        println!("{:?}", rem);
+        rem.0
+    });
 
     compy.update();
 
     compy.iterate_mut(rem, none, |rem: &Rem| {
         println!("O {:?}", rem);
-        false
     });
 }

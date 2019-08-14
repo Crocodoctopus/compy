@@ -6,7 +6,7 @@ use std::{
 type Bits = u64;
 
 /// Represents a component ID
-#[derive(Copy, Clone, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Copy, Clone, Eq, Ord, PartialEq, PartialOrd, Hash, Debug)]
 pub struct CompId(Bits);
 
 impl CompId {
