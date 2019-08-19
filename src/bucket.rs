@@ -15,7 +15,7 @@ pub struct Bucket {
     // Bucket data
     len: usize,
     cap: usize,
-    data: HashMap<CompId, RwLock<(*mut u8, usize)>>,
+    pub(super) data: HashMap<CompId, RwLock<(*mut u8, usize)>>,
 
     // Entities pending deletion, stored as ordered indices
     // Mutex<Vec<id>>
@@ -98,7 +98,7 @@ impl Bucket {
                         *data_ptr,
                         Layout::from_size_align_unchecked(*cap * *size, 64),
                         new_cap * *size,
-                    );  
+                    );
                 }
             }
             *cap = new_cap;
