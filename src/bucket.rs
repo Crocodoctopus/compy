@@ -83,7 +83,7 @@ impl Bucket {
 
     // Inserts an entity (pending_insert?)
     // #[TODO: Better name]
-    pub(super) fn insert(&self, data: &[(CompId, *const u8)]) {
+    pub(super) unsafe fn insert(&self, data: &[(CompId, *const u8)]) {
         // extract
         let mut lock = self.ins.lock();
         let (len, cap, hmap) = &mut *lock;
@@ -93,13 +93,11 @@ impl Bucket {
         if *len + 1 > *cap {
             let new_cap = (*len + 1) * 2;
             for (data_ptr, size) in hmap.values_mut() {
-                unsafe {
-                    *data_ptr = realloc(
-                        *data_ptr,
-                        Layout::from_size_align_unchecked(*cap * *size, 64),
-                        new_cap * *size,
-                    );
-                }
+                *data_ptr = realloc(
+                    *data_ptr,
+                    Layout::from_size_align_unchecked(*cap * *size, 64),
+                    new_cap * *size,
+                );
             }
             *cap = new_cap;
         }
@@ -110,7 +108,7 @@ impl Bucket {
                 hmap.get(comp_id)
                     .and_then(|(dst_ptr, size)| Some((src_ptr, dst_ptr, size)))
             })
-            .for_each(|(&src_ptr, &dst_ptr, &size)| unsafe {
+            .for_each(|(&src_ptr, &dst_ptr, &size)| {
                 let src: *const u8 = src_ptr;
                 let dst: *mut u8 = dst_ptr.add(*len * size);
                 let count = size;

@@ -140,6 +140,12 @@ impl_compy_iterate!(A);
 impl_compy_iterate!(A, B);
 impl_compy_iterate!(A, B, C);
 impl_compy_iterate!(A, B, C, D);
+impl_compy_iterate!(A, B, C, D, E);
+impl_compy_iterate!(A, B, C, D, E, F);
+impl_compy_iterate!(A, B, C, D, E, F, G);
+impl_compy_iterate!(A, B, C, D, E, F, G, H);
+impl_compy_iterate!(A, B, C, D, E, F, G, H, I);
+impl_compy_iterate!(A, B, C, D, E, F, G, H, I, J);
 
 /// Overloadable function for inserting entities
 pub trait CompyInsert<T> {
@@ -148,10 +154,10 @@ pub trait CompyInsert<T> {
 
 macro_rules! impl_compy_insert {
     ($(($ts: ident, $vs: tt)), *) => {
-        impl <$($ts: 'static + std::fmt::Debug,)*> CompyInsert<($($ts,)*)> for Compy {
+        impl <$($ts: 'static,)*> CompyInsert<($($ts,)*)> for Compy {
             fn insert(&self, t: ($($ts,)*)) {
                 // generate key from parts
-                $(let $ts = self.typeid_to_compid[&TypeId::of::<($ts)>()];)*
+                $(let $ts = self.typeid_to_compid[&TypeId::of::<$ts>()];)*
                 let key = Key::default() $(+ $ts)*;
 
                 // get bucket of said key
@@ -159,8 +165,7 @@ macro_rules! impl_compy_insert {
 
                 // insert
                 unsafe {
-                    $(bucket.insert(&[($ts, &t.$vs as *const _ as * const _)]);)*
-                    $(println!("{:?}", t.$vs);)*
+                    bucket.insert(&[$( ($ts, &t.$vs as *const _ as * const _), )*]);
                     std::mem::forget(t);       
                 }
             }
@@ -178,3 +183,7 @@ impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6));
 impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7));
 impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8));
 impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9), (K, 10));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9), (K, 10), (L, 11));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9), (K, 10), (L, 11), (M, 12));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9), (K, 10), (L, 11), (M, 12), (N, 13));
