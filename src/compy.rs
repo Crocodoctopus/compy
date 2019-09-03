@@ -102,526 +102,79 @@ impl Compy {
 }
 
 /// Overloadable function for iterating entities
-pub trait CompyIterate<Args, F, R> {
+pub trait CompyIterate<Args, F> {
     fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: F);
-    //fn iterate_alive_mut(&mut self, pkey: Key, nkey: Key, f: F);
-    //fn iterate_dead_mut(&mut self, pkey: Key, nkey: Key, f: F);
 }
 
-impl<'a, Func> CompyIterate<(), Func, bool> for Compy
-where
-    Func: FnMut() -> bool,
-{
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
-        let mut indices = Vec::<usize>::new();
+macro_rules! impl_compy_iterate {
+    ($($ts: ident), *) => {
+        impl <$($ts,)* Func> CompyIterate<($($ts,)*), Func> for Compy
+            where $($ts: Lock<Output = $ts> + 'static,)*
+                Func: FnMut($($ts,)*) -> bool {
+                fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
+                    // get component ids
+                    $(let mut $ts = self.typeid_to_compid[&$ts::base_type()];)*
 
-        for (key, bucket) in self.buckets.get_mut() {
-            let bucket = bucket;
-            if key.contains(pkey) && key.excludes(nkey) {
-                // get the size of the bucket
-                let len = bucket.get_len();
+                    //
+                    for (key, bucket) in self.buckets.get_mut().iter_mut().filter(|(key, _)| key.contains(pkey) && key.excludes(nkey)) {
+                        {
+                            // get locks
+                            $(let mut $ts = $ts::try_lock(bucket, $ts).unwrap();)*
 
-                // do the thing
-                indices.clear();
-                for index in 0..len {
-                    if f() {
-                        indices.push(index);
+                            // get the bucket size
+                            let len = bucket.get_len();
+
+                            // do the thing
+                            for index in 0..len {
+                                f($($ts::get(&mut $ts, index),)*);
+                            }
+                        }
                     }
                 }
-                if indices.len() > 0 {
-                    bucket.flag_for_removal(&mut indices);
-                    indices.clear();
-                }
-            }
         }
     }
 }
 
-impl<'a, A, Func> CompyIterate<(A,), Func, bool> for Compy
-where
-    A: Lock<Output = A> + 'static,
-    Func: FnMut(A) -> bool,
-{
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
-        let id0 = self.typeid_to_compid[&A::base_type()];
-        let mut indices = Vec::<usize>::new();
-
-        for (key, bucket) in self.buckets.get_mut() {
-            let bucket = bucket;
-            if key.contains(pkey) && key.excludes(nkey) {
-                // get the locks
-                let mut a_lock: A::Lock =
-                    A::try_lock(bucket, id0).expect("Unreachable for &mut self");
-
-                // get the size of the bucket
-                let len = bucket.get_len();
-
-                // do the thing
-                indices.clear();
-                for index in 0..len {
-                    let a = A::get(&mut a_lock, index);
-                    if f(a) {
-                        indices.push(index);
-                    }
-                }
-                if indices.len() > 0 {
-                    bucket.flag_for_removal(&mut indices);
-                    indices.clear();
-                }
-            }
-        }
-    }
-}
-
-/*impl<'a, A, B, Func> CompyIterate<(A, B), Func, ()> for Compy
-where
-    A: Lock<Output = A> + 'static,
-    B: Lock<Output = B> + 'static,
-    Func: FnMut(A, B) -> (),
-{
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
-        let id0 = self.typeid_to_compid[&A::base_type()];
-        let id1 = self.typeid_to_compid[&B::base_type()];
-
-        for (key, bucket) in self.buckets.get_mut() {
-            let bucket = bucket;
-            if key.contains(pkey) && key.excludes(nkey) {
-                // get the locks
-                let mut a_lock: A::Lock =
-                    A::try_lock(bucket, id0).expect("Unreachable for &mut self");
-                let mut b_lock: B::Lock =
-                    B::try_lock(bucket, id1).expect("Unreachable for &mut self");
-
-                // get the size of the bucket
-                let len = bucket.get_len();
-
-                // do the thing
-                for index in 0..len {
-                    let a = A::get(&mut a_lock, index);
-                    let b = B::get(&mut b_lock, index);
-                    f(a, b);
-                }
-            }
-        }
-    }
-}*/
-
-impl<'a, A, B, Func> CompyIterate<(A, B), Func, bool> for Compy
-where
-    A: Lock<Output = A> + 'static,
-    B: Lock<Output = B> + 'static,
-    Func: FnMut(A, B) -> bool,
-{
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
-        let id0 = self.typeid_to_compid[&A::base_type()];
-        let id1 = self.typeid_to_compid[&B::base_type()];
-        let mut indices = Vec::<usize>::new();
-
-        for (key, bucket) in self.buckets.get_mut() {
-            let bucket = bucket;
-            if key.contains(pkey) && key.excludes(nkey) {
-                // get the locks
-                let mut a_lock = A::try_lock(bucket, id0).expect("Unreachable for &mut self");
-                let mut b_lock = B::try_lock(bucket, id1).expect("Unreachable for &mut self");
-
-                // get the size of the bucket
-                let len = bucket.get_len();
-
-                // do the thing
-                indices.clear();
-                for index in 0..len {
-                    let a = A::get(&mut a_lock, index);
-                    let b = B::get(&mut b_lock, index);
-                    if f(a, b) {
-                        indices.push(index);
-                    }
-                }
-                if indices.len() > 0 {
-                    bucket.flag_for_removal(&mut indices);
-                    indices.clear();
-                }
-            }
-        }
-    }
-}
-
-impl<'a, A, B, C, Func> CompyIterate<(A, B, C), Func, bool> for Compy
-where
-    A: Lock<Output = A> + 'static,
-    B: Lock<Output = B> + 'static,
-    C: Lock<Output = C> + 'static,
-    Func: FnMut(A, B, C) -> bool,
-{
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
-        let id0 = self.typeid_to_compid[&A::base_type()];
-        let id1 = self.typeid_to_compid[&B::base_type()];
-        let id2 = self.typeid_to_compid[&C::base_type()];
-        let mut indices = Vec::<usize>::new();
-
-        for (key, bucket) in self.buckets.get_mut() {
-            let bucket = bucket;
-            if key.contains(pkey) && key.excludes(nkey) {
-                // get the locks
-                let mut a_lock = A::try_lock(bucket, id0).expect("Unreachable for &mut self");
-                let mut b_lock = B::try_lock(bucket, id1).expect("Unreachable for &mut self");
-                let mut c_lock = C::try_lock(bucket, id2).expect("Unreachable for &mut self");
-
-                // get the size of the bucket
-                let len = bucket.get_len();
-
-                // do the thing
-                indices.clear();
-                for index in 0..len {
-                    let a = A::get(&mut a_lock, index);
-                    let b = B::get(&mut b_lock, index);
-                    let c = C::get(&mut c_lock, index);
-                    if f(a, b, c) {
-                        indices.push(index);
-                    }
-                }
-                if indices.len() > 0 {
-                    bucket.flag_for_removal(&mut indices);
-                    indices.clear();
-                }
-            }
-        }
-    }
-}
+impl_compy_iterate!();
+impl_compy_iterate!(A);
+impl_compy_iterate!(A, B);
+impl_compy_iterate!(A, B, C);
+impl_compy_iterate!(A, B, C, D);
 
 /// Overloadable function for inserting entities
 pub trait CompyInsert<T> {
     fn insert(&self, t: T);
 }
 
-impl<A> CompyInsert<(A,)> for Compy
-where
-    A: 'static,
-{
-    fn insert(&self, t: (A,)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let key = Key::from(i0);
+macro_rules! impl_compy_insert {
+    ($(($ts: ident, $vs: tt)), *) => {
+        impl <$($ts: 'static + std::fmt::Debug,)*> CompyInsert<($($ts,)*)> for Compy {
+            fn insert(&self, t: ($($ts,)*)) {
+                // generate key from parts
+                $(let $ts = self.typeid_to_compid[&TypeId::of::<($ts)>()];)*
+                let key = Key::default() $(+ $ts)*;
 
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
+                // get bucket of said key
+                let bucket = self.get_bucket_or_make(key);
 
-        // insert tuple into the bucket
-        bucket.insert(&[(i0, &t.0 as *const _ as *const _)]);
-        std::mem::forget(t);
+                // insert
+                unsafe {
+                    $(bucket.insert(&[($ts, &t.$vs as *const _ as * const _)]);)*
+                    $(println!("{:?}", t.$vs);)*
+                    std::mem::forget(t);       
+                }
+            }
+        }
     }
 }
 
-impl<A, B> CompyInsert<(A, B)> for Compy
-where
-    A: 'static,
-    B: 'static,
-{
-    fn insert(&self, t: (A, B)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let key = i0 + i1;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const A as *const u8),
-            (i1, &t.1 as *const B as *const u8),
-        ]);
-        std::mem::forget(t);
-    }
-}
-
-impl<A, B, C> CompyInsert<(A, B, C)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-{
-    fn insert(&self, t: (A, B, C)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
-        let key = i0 + i1 + i2;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const _ as *const _),
-            (i1, &t.1 as *const _ as *const _),
-            (i2, &t.2 as *const _ as *const _),
-        ]);
-        std::mem::forget(t);
-    }
-}
-
-impl<A, B, C, D> CompyInsert<(A, B, C, D)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-    D: 'static,
-{
-    fn insert(&self, t: (A, B, C, D)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
-        let i3 = self.typeid_to_compid[&TypeId::of::<D>()];
-        let key = i0 + i1 + i2 + i3;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const _ as *const _),
-            (i1, &t.1 as *const _ as *const _),
-            (i2, &t.2 as *const _ as *const _),
-            (i3, &t.3 as *const _ as *const _),
-        ]);
-        std::mem::forget(t);
-    }
-}
-
-impl<A, B, C, D, E> CompyInsert<(A, B, C, D, E)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-    D: 'static,
-    E: 'static,
-{
-    fn insert(&self, t: (A, B, C, D, E)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
-        let i3 = self.typeid_to_compid[&TypeId::of::<D>()];
-        let i4 = self.typeid_to_compid[&TypeId::of::<E>()];
-        let key = i0 + i1 + i2 + i3 + i4;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const _ as *const _),
-            (i1, &t.1 as *const _ as *const _),
-            (i2, &t.2 as *const _ as *const _),
-            (i3, &t.3 as *const _ as *const _),
-            (i4, &t.4 as *const _ as *const _),
-        ]);
-        std::mem::forget(t);
-    }
-}
-
-impl<A, B, C, D, E, F> CompyInsert<(A, B, C, D, E, F)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-    D: 'static,
-    E: 'static,
-    F: 'static,
-{
-    fn insert(&self, t: (A, B, C, D, E, F)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
-        let i3 = self.typeid_to_compid[&TypeId::of::<D>()];
-        let i4 = self.typeid_to_compid[&TypeId::of::<E>()];
-        let i5 = self.typeid_to_compid[&TypeId::of::<F>()];
-        let key = i0 + i1 + i2 + i3 + i4 + i5;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const _ as *const _),
-            (i1, &t.1 as *const _ as *const _),
-            (i2, &t.2 as *const _ as *const _),
-            (i3, &t.3 as *const _ as *const _),
-            (i4, &t.4 as *const _ as *const _),
-            (i5, &t.5 as *const _ as *const _),
-        ]);
-        std::mem::forget(t);
-    }
-}
-
-impl<A, B, C, D, E, F, G> CompyInsert<(A, B, C, D, E, F, G)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-    D: 'static,
-    E: 'static,
-    F: 'static,
-    G: 'static,
-{
-    fn insert(&self, t: (A, B, C, D, E, F, G)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
-        let i3 = self.typeid_to_compid[&TypeId::of::<D>()];
-        let i4 = self.typeid_to_compid[&TypeId::of::<E>()];
-        let i5 = self.typeid_to_compid[&TypeId::of::<F>()];
-        let i6 = self.typeid_to_compid[&TypeId::of::<G>()];
-        let key = i0 + i1 + i2 + i3 + i4 + i5 + i6;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const _ as *const _),
-            (i1, &t.1 as *const _ as *const _),
-            (i2, &t.2 as *const _ as *const _),
-            (i3, &t.3 as *const _ as *const _),
-            (i4, &t.4 as *const _ as *const _),
-            (i5, &t.5 as *const _ as *const _),
-            (i6, &t.6 as *const _ as *const _),
-        ]);
-        std::mem::forget(t);
-    }
-}
-
-impl<A, B, C, D, E, F, G, H> CompyInsert<(A, B, C, D, E, F, G, H)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-    D: 'static,
-    E: 'static,
-    F: 'static,
-    G: 'static,
-    H: 'static,
-{
-    fn insert(&self, t: (A, B, C, D, E, F, G, H)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
-        let i3 = self.typeid_to_compid[&TypeId::of::<D>()];
-        let i4 = self.typeid_to_compid[&TypeId::of::<E>()];
-        let i5 = self.typeid_to_compid[&TypeId::of::<F>()];
-        let i6 = self.typeid_to_compid[&TypeId::of::<G>()];
-        let i7 = self.typeid_to_compid[&TypeId::of::<H>()];
-        let key = i0 + i1 + i2 + i3 + i4 + i5 + i6 + i7;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const _ as *const _),
-            (i1, &t.1 as *const _ as *const _),
-            (i2, &t.2 as *const _ as *const _),
-            (i3, &t.3 as *const _ as *const _),
-            (i4, &t.4 as *const _ as *const _),
-            (i5, &t.5 as *const _ as *const _),
-            (i6, &t.6 as *const _ as *const _),
-            (i7, &t.7 as *const _ as *const _),
-        ]);
-        std::mem::forget(t);
-    }
-}
-
-impl<A, B, C, D, E, F, G, H, I> CompyInsert<(A, B, C, D, E, F, G, H, I)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-    D: 'static,
-    E: 'static,
-    F: 'static,
-    G: 'static,
-    H: 'static,
-    I: 'static,
-{
-    fn insert(&self, t: (A, B, C, D, E, F, G, H, I)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
-        let i3 = self.typeid_to_compid[&TypeId::of::<D>()];
-        let i4 = self.typeid_to_compid[&TypeId::of::<E>()];
-        let i5 = self.typeid_to_compid[&TypeId::of::<F>()];
-        let i6 = self.typeid_to_compid[&TypeId::of::<G>()];
-        let i7 = self.typeid_to_compid[&TypeId::of::<H>()];
-        let i8 = self.typeid_to_compid[&TypeId::of::<I>()];
-        let key = i0 + i1 + i2 + i3 + i4 + i5 + i6 + i7 + i8;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const _ as *const _),
-            (i1, &t.1 as *const _ as *const _),
-            (i2, &t.2 as *const _ as *const _),
-            (i3, &t.3 as *const _ as *const _),
-            (i4, &t.4 as *const _ as *const _),
-            (i5, &t.5 as *const _ as *const _),
-            (i6, &t.6 as *const _ as *const _),
-            (i7, &t.7 as *const _ as *const _),
-            (i8, &t.8 as *const _ as *const _),
-        ]);
-        std::mem::forget(t);
-    }
-}
-
-impl<A, B, C, D, E, F, G, H, I, J> CompyInsert<(A, B, C, D, E, F, G, H, I, J)> for Compy
-where
-    A: 'static,
-    B: 'static,
-    C: 'static,
-    D: 'static,
-    E: 'static,
-    F: 'static,
-    G: 'static,
-    H: 'static,
-    I: 'static,
-    J: 'static,
-{
-    fn insert(&self, t: (A, B, C, D, E, F, G, H, I, J)) {
-        // create a key from the types
-        let i0 = self.typeid_to_compid[&TypeId::of::<A>()];
-        let i1 = self.typeid_to_compid[&TypeId::of::<B>()];
-        let i2 = self.typeid_to_compid[&TypeId::of::<C>()];
-        let i3 = self.typeid_to_compid[&TypeId::of::<D>()];
-        let i4 = self.typeid_to_compid[&TypeId::of::<E>()];
-        let i5 = self.typeid_to_compid[&TypeId::of::<F>()];
-        let i6 = self.typeid_to_compid[&TypeId::of::<G>()];
-        let i7 = self.typeid_to_compid[&TypeId::of::<H>()];
-        let i8 = self.typeid_to_compid[&TypeId::of::<I>()];
-        let i9 = self.typeid_to_compid[&TypeId::of::<J>()];
-        let key = i0 + i1 + i2 + i3 + i4 + i5 + i6 + i7 + i8 + i9;
-
-        // get the bucket of said key
-        let bucket = self.get_bucket_or_make(key);
-
-        // insert tuple into the bucket
-        bucket.insert(&[
-            (i0, &t.0 as *const _ as *const _),
-            (i1, &t.1 as *const _ as *const _),
-            (i2, &t.2 as *const _ as *const _),
-            (i3, &t.3 as *const _ as *const _),
-            (i4, &t.4 as *const _ as *const _),
-            (i5, &t.5 as *const _ as *const _),
-            (i6, &t.6 as *const _ as *const _),
-            (i7, &t.7 as *const _ as *const _),
-            (i8, &t.8 as *const _ as *const _),
-            (i9, &t.9 as *const _ as *const _),
-        ]);
-        std::mem::forget(t);
-    }
-}
+impl_compy_insert!((A, 0));
+impl_compy_insert!((A, 0), (B, 1));
+impl_compy_insert!((A, 0), (B, 1), (C, 2));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8));
+impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9));
