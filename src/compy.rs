@@ -57,13 +57,6 @@ impl Compy {
         }
     }
 
-    /// Gets the key associated with the given type ids. (deprecated?)
-    pub fn get_key(&self, type_ids: &[TypeId]) -> Key {
-        type_ids
-            .iter()
-            .fold(Key::default(), |acc, id| acc + self.typeid_to_compid[id])
-    }
-
     /// Gets the key associated with the given type id.
     pub fn get_key_for<T: 'static>(&self) -> Key {
         Key::from(self.typeid_to_compid[&TypeId::of::<T>()])
@@ -77,7 +70,6 @@ impl Compy {
             .values_mut()
             .map(|b| Arc::get_mut(b).unwrap())
         {
-            //bucket.remove_pending();
             bucket.insert_pending();
         }
     }

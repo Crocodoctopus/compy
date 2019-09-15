@@ -17,10 +17,6 @@ pub struct Bucket {
     cap: usize,
     pub(super) data: HashMap<CompId, RwLock<(*mut u8, usize)>>,
 
-    // Entities pending deletion, stored as ordered indices
-    // Mutex<Vec<id>>
-    rem: Mutex<Vec<usize>>,
-
     // Entities pending insertion
     // Mutex<(len, cap, HashMap<id, (ptr, size)>)>
     ins: Mutex<(usize, usize, HashMap<CompId, (*mut u8, usize)>)>,
@@ -71,7 +67,6 @@ impl Bucket {
             len: starting_len,
             cap: starting_cap,
             data,
-            rem: Mutex::new(Vec::new()),
             ins: Mutex::new((starting_len, starting_cap, ins)),
         }
     }
@@ -157,99 +152,6 @@ impl Bucket {
             // add the drained data len to the real len, set drained len to 0
             self.len += *len;
             *len = 0;
-        }
-    }
-
-    // Flags an index for removal. Actually removal occurs with the associated remove_pending
-    pub(super) fn flag_for_removal(&self, indices: &mut Vec<usize>) {
-        // merge indices into prem, discard duplicates
-        let mut v0 = self.rem.lock();
-        let v1 = indices;
-
-        // generate a new vec
-        let mut new_v = Vec::with_capacity(v0.len() + v1.len());
-
-        // add a "cap" to both vectors
-        v0.push(usize::max_value());
-        v1.push(usize::max_value());
-
-        // merge
-        let mut index0 = 0;
-        let mut index1 = 0;
-        let mut last = usize::max_value();
-        loop {
-            let t0 = v0[index0];
-            let t1 = v1[index1];
-
-            // if v0 is smaller
-            if t0 < t1 {
-                // if the last value isn't v0
-                if last != t0 {
-                    new_v.push(t0);
-                    last = t0;
-                }
-
-                // inc
-                index0 += 1;
-
-                continue;
-            }
-
-            // if v1 is smaller, and not a "cap"
-            if t1 < t0 && t1 != usize::max_value() {
-                // if the last value isn't v0
-                if last != t1 {
-                    new_v.push(t1);
-                    last = t1;
-                }
-
-                // inc
-                index1 += 1;
-
-                continue;
-            }
-
-            // if we make it this far, we done
-            break;
-        }
-
-        // replace v0
-        *v0 = new_v;
-    }
-
-    pub(super) fn remove_pending(&mut self) {
-        let indices = self.rem.get_mut();
-        if indices.len() > 0 {
-            // pushes a "cap" onto the removal vec
-            indices.push(self.len);
-
-            // for each data array, remove the indices in indices
-            for &mut (ptr, size) in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
-                // index we're moving the data slice to
-                let mut copy_to = indices[0];
-
-                // "for each data slice"
-                let mut last = indices[0];
-                for &index in indices.iter().skip(1) {
-                    // if not a consecutive index
-                    if last + 1 != index {
-                        let mov_len = index - last - 1;
-                        unsafe {
-                            copy(
-                                ptr.add(last * size + size),
-                                ptr.add(copy_to * size),
-                                mov_len * size,
-                            );
-                        }
-                        copy_to += mov_len;
-                    }
-                    last = index;
-                }
-            }
-
-            //
-            self.len -= indices.len() - 1;
-            indices.clear();
         }
     }
 }
