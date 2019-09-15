@@ -1,5 +1,6 @@
 use crate::{
     bucket::{Bucket, Lock},
+    id_set::IdSet,
     key::{CompId, Key},
 };
 use parking_lot::RwLock;
@@ -69,14 +70,14 @@ impl Compy {
     }
 
     /// Performs all pending inserts and deletes. This function is singlethreaded, and requires mutable access to Compy.
-    pub fn update(&mut self) {
+    pub fn insert_all(&mut self) {
         for bucket in self
             .buckets
             .get_mut()
             .values_mut()
             .map(|b| Arc::get_mut(b).unwrap())
         {
-            bucket.remove_pending();
+            //bucket.remove_pending();
             bucket.insert_pending();
         }
     }
@@ -102,50 +103,79 @@ impl Compy {
 }
 
 /// Overloadable function for iterating entities
-pub trait CompyIterate<Args, F> {
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: F);
+pub trait CompyIterate<In, Out, IdSet, Func> {
+    fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: Func) -> IdSet;
 }
 
 macro_rules! impl_compy_iterate {
-    ($($ts: ident), *) => {
-        impl <$($ts,)* Func> CompyIterate<($($ts,)*), Func> for Compy
-            where $($ts: Lock<Output = $ts> + 'static,)*
-                Func: FnMut($($ts,)*) -> bool {
-                fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) {
-                    // get component ids
-                    $(let mut $ts = self.typeid_to_compid[&$ts::base_type()];)*
+    (($($arg_names: tt, $args: tt),*), ($($bool_names: tt, $bools: ty),*), ($($vec_names: tt, $id_set_names: tt, $id_sets: ty),*)) => {
+        impl<$($args,)* Func> CompyIterate<($($args,)*), ($($bools),*), ($($id_sets),*), Func> for Compy
+        where
+            $($args: Lock<Output = $args>,)*
+            Func: FnMut($($args),*) -> ($($bools),*),
+        {
+            fn iterate_mut(&mut self, pkey: Key, nkey: Key, mut f: Func) -> ($($id_sets),*) {
+                // get component ids
+                $(let $arg_names = self.typeid_to_compid[&$args::base_type()];)*
 
-                    //
-                    for (key, bucket) in self.buckets.get_mut().iter_mut().filter(|(key, _)| key.contains(pkey) && key.excludes(nkey)) {
-                        {
-                            // get locks
-                            $(let mut $ts = $ts::try_lock(bucket, $ts).unwrap();)*
+                // create id groups
+                $(let mut $id_set_names = IdSet::new();)*
 
-                            // get the bucket size
-                            let len = bucket.get_len();
+                // iterate
+                for (_key, bucket) in self.buckets.get_mut().iter_mut().filter(|(key, _)| key.contains(pkey) && key.excludes(nkey)) {
+                    // get locks
+                    $(let mut $arg_names = $args::try_lock(bucket, $arg_names).unwrap();)*
 
-                            // do the thing
-                            for index in 0..len {
-                                f($($ts::get(&mut $ts, index),)*);
-                            }
-                        }
+                    // get bucket len
+                    let len = bucket.get_len();
+
+                    // create vecs
+                    $(let mut $vec_names = Vec::<u32>::with_capacity(len);)*
+
+                    // do the thing
+                    for index in 0..len {
+                        #[allow(unused_parens)]
+                        let ($($bool_names),*) = f($($args::get(&mut $arg_names, index)),*);
+                        $(if $bool_names == true { $vec_names.push(index as u32); })*
                     }
+
+                    // insert
+                    $($id_set_names.insert(*_key, $vec_names);)*
                 }
+
+                ($($id_set_names),*)
+            }
         }
-    }
+    };
 }
 
-impl_compy_iterate!();
-impl_compy_iterate!(A);
-impl_compy_iterate!(A, B);
-impl_compy_iterate!(A, B, C);
-impl_compy_iterate!(A, B, C, D);
-impl_compy_iterate!(A, B, C, D, E);
-impl_compy_iterate!(A, B, C, D, E, F);
-impl_compy_iterate!(A, B, C, D, E, F, G);
-impl_compy_iterate!(A, B, C, D, E, F, G, H);
-impl_compy_iterate!(A, B, C, D, E, F, G, H, I);
-impl_compy_iterate!(A, B, C, D, E, F, G, H, I, J);
+impl_compy_iterate! {(aa, A), (), ()}
+impl_compy_iterate! {(aa, A, ab, B), (), ()}
+impl_compy_iterate! {(aa, A, ab, B, ac, C), (), ()}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D), (), ()}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E), (), ()}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E, af, F), (), ()}
+impl_compy_iterate! {(), (ba, bool), (veca, ia, IdSet)}
+impl_compy_iterate! {(aa, A), (ba, bool), (veca, ia, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B), (ba, bool), (veca, ia, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C), (ba, bool), (veca, ia, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D), (ba, bool), (veca, ia, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E), (ba, bool), (veca, ia, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E, af, F), (ba, bool), (veca, ia, IdSet)}
+impl_compy_iterate! {(), (ba, bool, bb, bool), (veca, ia, IdSet, vecb, ib, IdSet)}
+impl_compy_iterate! {(aa, A), (ba, bool, bb, bool), (veca, ia, IdSet, vecb, ib, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B), (ba, bool, bb, bool), (veca, ia, IdSet, vecb, ib, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C), (ba, bool, bb, bool), (veca, ia, IdSet, vecb, ib, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D), (ba, bool, bb, bool), (veca, ia, IdSet, vecb, ib, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E), (ba, bool, bb, bool), (veca, ia, IdSet, vecb, ib, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E, af, F), (ba, bool, bb, bool), (veca, ia, IdSet, vecb, ib, IdSet)}
+impl_compy_iterate! {(), (ba, bool, bb, bool, bc, bool), (veca, ia, IdSet, vecb, ib, IdSet, vecc, ic, IdSet)}
+impl_compy_iterate! {(aa, A), (ba, bool, bb, bool, bc, bool), (veca, ia, IdSet, vecb, ib, IdSet, vecc, ic, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B), (ba, bool, bb, bool, bc, bool), (veca, ia, IdSet, vecb, ib, IdSet, vecc, ic, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C), (ba, bool, bb, bool, bc, bool), (veca, ia, IdSet, vecb, ib, IdSet, vecc, ic, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D), (ba, bool, bb, bool, bc, bool), (veca, ia, IdSet, vecb, ib, IdSet, vecc, ic, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E), (ba, bool, bb, bool, bc, bool), (veca, ia, IdSet, vecb, ib, IdSet, vecc, ic, IdSet)}
+impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E, af, F), (ba, bool, bb, bool, bc, bool), (veca, ia, IdSet, vecb, ib, IdSet, vecc, ic, IdSet)}
 
 /// Overloadable function for inserting entities
 pub trait CompyInsert<T> {
@@ -153,37 +183,136 @@ pub trait CompyInsert<T> {
 }
 
 macro_rules! impl_compy_insert {
-    ($(($ts: ident, $vs: tt)), *) => {
+    ($(($t_names: tt, $ts: tt, $vs: tt)), *) => {
         impl <$($ts: 'static,)*> CompyInsert<($($ts,)*)> for Compy {
             fn insert(&self, t: ($($ts,)*)) {
                 // generate key from parts
-                $(let $ts = self.typeid_to_compid[&TypeId::of::<$ts>()];)*
-                let key = Key::default() $(+ $ts)*;
+                $(let $t_names = self.typeid_to_compid[&TypeId::of::<$ts>()];)*
+                let key = Key::default() $(+ $t_names)*;
 
                 // get bucket of said key
                 let bucket = self.get_bucket_or_make(key);
 
                 // insert
                 unsafe {
-                    bucket.insert(&[$( ($ts, &t.$vs as *const _ as * const _), )*]);
-                    std::mem::forget(t);       
+                    bucket.insert(&[$( ($t_names, &t.$vs as *const _ as * const _), )*]);
+                    std::mem::forget(t);
                 }
             }
         }
     }
 }
 
-impl_compy_insert!((A, 0));
-impl_compy_insert!((A, 0), (B, 1));
-impl_compy_insert!((A, 0), (B, 1), (C, 2));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9), (K, 10));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9), (K, 10), (L, 11));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9), (K, 10), (L, 11), (M, 12));
-impl_compy_insert!((A, 0), (B, 1), (C, 2), (D, 3), (E, 4), (F, 5), (G, 6), (H, 7), (I, 8), (J, 9), (K, 10), (L, 11), (M, 12), (N, 13));
+impl_compy_insert!((a, A, 0));
+impl_compy_insert!((a, A, 0), (b, B, 1));
+impl_compy_insert!((a, A, 0), (b, B, 1), (c, C, 2));
+impl_compy_insert!((a, A, 0), (b, B, 1), (c, C, 2), (d, D, 3));
+impl_compy_insert!((a, A, 0), (b, B, 1), (c, C, 2), (d, D, 3), (e, E, 4));
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5)
+);
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5),
+    (g, G, 6)
+);
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5),
+    (g, G, 6),
+    (h, H, 7)
+);
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5),
+    (g, G, 6),
+    (h, H, 7),
+    (i, I, 8)
+);
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5),
+    (g, G, 6),
+    (h, H, 7),
+    (i, I, 8),
+    (j, J, 9)
+);
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5),
+    (g, G, 6),
+    (h, H, 7),
+    (i, I, 8),
+    (j, J, 9),
+    (k, K, 10)
+);
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5),
+    (g, G, 6),
+    (h, H, 7),
+    (i, I, 8),
+    (j, J, 9),
+    (k, K, 10),
+    (l, L, 11)
+);
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5),
+    (g, G, 6),
+    (h, H, 7),
+    (i, I, 8),
+    (j, J, 9),
+    (k, K, 10),
+    (l, L, 11),
+    (m, M, 12)
+);
+impl_compy_insert!(
+    (a, A, 0),
+    (b, B, 1),
+    (c, C, 2),
+    (d, D, 3),
+    (e, E, 4),
+    (f, F, 5),
+    (g, G, 6),
+    (h, H, 7),
+    (i, I, 8),
+    (j, J, 9),
+    (k, K, 10),
+    (l, L, 11),
+    (m, M, 12),
+    (n, N, 13)
+);
