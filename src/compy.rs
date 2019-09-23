@@ -1,6 +1,6 @@
 use crate::{
     bucket::{Bucket, Lock},
-    id_set::IdSet,
+    id_set::{IdSet, IdSetBuilder},
     key::{CompId, Key},
 };
 use parking_lot::RwLock;
@@ -12,6 +12,9 @@ use std::{
 
 /// The master type. Cotains all the component/entity data.
 pub struct Compy {
+    // generation
+    gen: usize,
+
     // type data
     typeid_to_compid: HashMap<TypeId, CompId>,
     compid_to_size: HashMap<CompId, usize>,
@@ -26,6 +29,7 @@ impl Compy {
         compid_to_size: HashMap<CompId, usize>,
     ) -> Self {
         Self {
+            gen: 0,
             typeid_to_compid,
             compid_to_size,
             buckets: RwLock::new(BTreeMap::new()),
@@ -62,7 +66,7 @@ impl Compy {
         Key::from(self.typeid_to_compid[&TypeId::of::<T>()])
     }
 
-    /// Performs all pending inserts and deletes. This function is singlethreaded, and requires mutable access to Compy.
+    /// Performs all pending inserts. This function is singlethreaded, and requires mutable access to Compy.
     pub fn insert_all(&mut self) {
         for bucket in self
             .buckets
@@ -72,6 +76,23 @@ impl Compy {
         {
             bucket.insert_pending();
         }
+    }
+
+    /// Performs 
+    pub fn remove(&mut self, id_set: &IdSet) {
+        if id_set.gen != self.gen {
+            panic!("TODO uhhh");
+        }
+
+        // delete
+        for (key, ids) in id_set.data.iter() {
+            // I hope this works
+            let bucket: &mut Bucket = Arc::get_mut(self.buckets.get_mut().get_mut(&key).unwrap()).unwrap();
+            let len = ids.len();
+            bucket.remove(&ids[0..len - 1]);
+        }
+
+        self.gen += 1;
     }
 
     pub fn print_stats(&self) {
@@ -95,8 +116,9 @@ impl Compy {
 }
 
 /// Overloadable function for iterating entities
-pub trait CompyIterate<In, Out, IdSet, Func> {
-    fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: Func) -> IdSet;
+pub trait CompyIterate<In, Out, IdSetRet, Func> {
+    fn iterate_mut(&mut self, pkey: Key, nkey: Key, f: Func) -> IdSetRet;
+    fn iterate_ids_mut(&mut self, pkey: Key, nkey: Key, id_set: &IdSet, f: Func) -> IdSetRet;
 }
 
 macro_rules! impl_compy_iterate {
@@ -111,7 +133,7 @@ macro_rules! impl_compy_iterate {
                 $(let $arg_names = self.typeid_to_compid[&$args::base_type()];)*
 
                 // create id groups
-                $(let mut $id_set_names = IdSet::new();)*
+                $(let mut $id_set_names = IdSetBuilder::new();)*
 
                 // iterate
                 for (_key, bucket) in self.buckets.get_mut().iter_mut().filter(|(key, _)| key.contains(pkey) && key.excludes(nkey)) {
@@ -132,10 +154,50 @@ macro_rules! impl_compy_iterate {
                     }
 
                     // insert
-                    $($id_set_names.insert(*_key, $vec_names);)*
+                    $($id_set_names.push(*_key, $vec_names).unwrap();)*
                 }
 
-                ($($id_set_names),*)
+                ($($id_set_names.build(self.gen)),*)
+            }
+
+            fn iterate_ids_mut(&mut self, pkey: Key, nkey: Key, id_set: &IdSet, mut f: Func) -> ($($id_sets),*) {
+                if id_set.gen != self.gen {
+                    panic!("Oof");
+                }
+
+                // get component ids
+                $(let $arg_names = self.typeid_to_compid[&$args::base_type()];)*
+
+                // create id groups
+                $(let mut $id_set_names = IdSetBuilder::new();)*
+
+                // iterate
+                for (key, ids) in id_set.data.iter().filter(|(key, _)| key.contains(pkey) && key.excludes(nkey)) {
+                    let bucket: &mut Bucket = Arc::get_mut(self.buckets.get_mut().get_mut(&key).unwrap()).unwrap();
+                    
+                    // get locks
+                    $(let mut $arg_names = $args::try_lock(bucket, $arg_names).unwrap();)*
+
+                    // get bucket len
+                    let _len = bucket.get_len();
+
+                    // create vecs
+                    $(let mut $vec_names = Vec::<u32>::with_capacity(_len);)*
+
+                    // do the thing
+                    let last = ids.len() - 1;
+                    for index in 0..last {
+                        let index = ids[index] as usize;
+                        #[allow(unused_parens)]
+                        let ($($bool_names),*) = f($($args::get(&mut $arg_names, index as usize)),*);
+                        $(if $bool_names == true { $vec_names.push(index as u32); })*
+                    }
+
+                    // insert
+                    $($id_set_names.push(*key, $vec_names).unwrap();)*
+                }
+
+                ($($id_set_names.build(self.gen)),*)
             }
         }
     };

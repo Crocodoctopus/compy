@@ -15,7 +15,7 @@ pub struct Bucket {
     // Bucket data
     len: usize,
     cap: usize,
-    pub(super) data: HashMap<CompId, RwLock<(*mut u8, usize)>>,
+    pub(super) data: HashMap<CompId, RwLock<(*mut u8, usize)>>, // ptr, size
 
     // Entities pending insertion
     // Mutex<(len, cap, HashMap<id, (ptr, size)>)>
@@ -74,6 +74,22 @@ impl Bucket {
     // Pretty self explanatory
     pub(super) fn get_len(&self) -> usize {
         self.len
+    }
+
+    //
+    pub(super) fn remove(&mut self, ids: &[u32]) {
+        let v: Vec<(*mut u8, usize)> = self.data.values_mut().map(|ptr_lock| *ptr_lock.get_mut()).collect();
+        for index in ids.iter().rev() {
+            for (ptr, size) in &v {
+                unsafe {
+                    let src = ptr.add(*index as usize * size);
+                    let dst = ptr.add(self.len * size - size);
+                    let count = *size;
+                    copy(src, dst, count);
+                }
+            }
+            self.len -= 1;
+        }
     }
 
     // Inserts an entity (pending_insert?)

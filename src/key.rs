@@ -50,6 +50,10 @@ impl Key {
         self.0 & key.0 == 0
     }
 
+    pub(super) fn from_raw(bits: Bits) -> Self {
+        Key(bits)
+    }
+
     pub fn for_each_comp_id<Func: FnMut(CompId)>(self, mut f: Func) {
         for id in (0..size_of::<Bits>() * 8)
             .map(|v| 1 << v)
