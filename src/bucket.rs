@@ -100,6 +100,8 @@ impl Bucket {
                 }
             }
         }
+
+        self.len -= indices.len();
     }
 
     // Inserts an entity (pending_insert?)
