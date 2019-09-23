@@ -74,11 +74,11 @@ impl Compy {
             .values_mut()
             .map(|b| Arc::get_mut(b).unwrap())
         {
-            bucket.insert_pending();
+            bucket.insert_pending_entities();
         }
     }
 
-    /// Performs 
+    /// Performs
     pub fn remove(&mut self, id_set: &IdSet) {
         if id_set.gen != self.gen {
             panic!("TODO uhhh");
@@ -87,7 +87,8 @@ impl Compy {
         // delete
         for (key, ids) in id_set.data.iter() {
             // I hope this works
-            let bucket: &mut Bucket = Arc::get_mut(self.buckets.get_mut().get_mut(&key).unwrap()).unwrap();
+            let bucket: &mut Bucket =
+                Arc::get_mut(self.buckets.get_mut().get_mut(&key).unwrap()).unwrap();
             let len = ids.len();
             bucket.remove(&ids[0..len - 1]);
         }
@@ -174,7 +175,7 @@ macro_rules! impl_compy_iterate {
                 // iterate
                 for (key, ids) in id_set.data.iter().filter(|(key, _)| key.contains(pkey) && key.excludes(nkey)) {
                     let bucket: &mut Bucket = Arc::get_mut(self.buckets.get_mut().get_mut(&key).unwrap()).unwrap();
-                    
+
                     // get locks
                     $(let mut $arg_names = $args::try_lock(bucket, $arg_names).unwrap();)*
 
@@ -249,7 +250,7 @@ macro_rules! impl_compy_insert {
 
                 // insert
                 unsafe {
-                    bucket.insert(&[$( ($t_names, &t.$vs as *const _ as * const _), )*]);
+                    bucket.queue_entity_insert(&[$( ($t_names, &t.$vs as *const _ as * const _), )*]);
                     std::mem::forget(t);
                 }
             }

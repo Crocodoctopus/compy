@@ -24,11 +24,22 @@ pub struct Bucket {
 
 impl Drop for Bucket {
     fn drop(&mut self) {
-        let it1 = self.data.values_mut().map(|rw| &*rw.get_mut());
-        let it2 = self.ins.get_mut().2.values();
-        for &(ptr, size) in it1.chain(it2) {
+        // free ``data`` pointers
+        for (ptr, size) in self
+            .data
+            .values_mut()
+            .map(|lock| (lock.get_mut().0, lock.get_mut().1))
+        {
             unsafe {
-                dealloc(ptr, Layout::from_size_align_unchecked(size * self.cap, 64));
+                dealloc(ptr, Layout::from_size_align_unchecked(size * self.cap, 8));
+            }
+        }
+
+        // free ``ins`` pointers
+        let lock = self.ins.get_mut();
+        for &(ptr, size) in lock.2.values() {
+            unsafe {
+                dealloc(ptr, Layout::from_size_align_unchecked(size * lock.1, 8));
             }
         }
     }
@@ -38,8 +49,8 @@ impl Bucket {
     // Constructs a new Bucket based on the given key
     pub(super) fn new(key: Key, compid_to_size: &HashMap<CompId, usize>) -> Self {
         // some starting parameters
-        let starting_len = 0;
-        let starting_cap = 32;
+        let bucket_len = 0;
+        let bucket_cap = 32;
 
         // construct the data/ins hashmaps
         let mut data = HashMap::new();
@@ -48,14 +59,15 @@ impl Bucket {
             // the size associated with this id
             let size = compid_to_size[&id];
 
+            // if the component is a tag (size == 0), then we don't need a data entry for it
             if size == 0 {
                 return;
             }
 
-            // allocate memory
+            // allocate memory for both the component data AND pending component data
             let (data_ptr, ins_ptr) = unsafe {
-                let data_ptr = alloc(Layout::from_size_align_unchecked(starting_cap * size, 64));
-                let ins_ptr = alloc(Layout::from_size_align_unchecked(starting_cap * size, 64));
+                let data_ptr = alloc(Layout::from_size_align_unchecked(bucket_cap * size, 8));
+                let ins_ptr = alloc(Layout::from_size_align_unchecked(bucket_cap * size, 8));
                 (data_ptr, ins_ptr)
             };
             data.insert(id, RwLock::new((data_ptr, size)));
@@ -64,10 +76,10 @@ impl Bucket {
 
         // build the Bucket
         Self {
-            len: starting_len,
-            cap: starting_cap,
+            len: bucket_len,
+            cap: bucket_cap,
             data,
-            ins: Mutex::new((starting_len, starting_cap, ins)),
+            ins: Mutex::new((bucket_len, bucket_cap, ins)),
         }
     }
 
@@ -76,11 +88,10 @@ impl Bucket {
         self.len
     }
 
-    //
-    pub(super) fn remove(&mut self, ids: &[u32]) {
-        let v: Vec<(*mut u8, usize)> = self.data.values_mut().map(|ptr_lock| *ptr_lock.get_mut()).collect();
-        for index in ids.iter().rev() {
-            for (ptr, size) in &v {
+    // Remove elements from the Bucket. Note that indices must be in order of least to greatest
+    pub(super) fn remove(&mut self, indices: &[u32]) {
+        for (ptr, size) in self.data.values_mut().map(|lock| &*lock.get_mut()) {
+            for index in indices.iter().rev() {
                 unsafe {
                     let src = ptr.add(*index as usize * size);
                     let dst = ptr.add(self.len * size - size);
@@ -88,25 +99,24 @@ impl Bucket {
                     copy(src, dst, count);
                 }
             }
-            self.len -= 1;
         }
     }
 
     // Inserts an entity (pending_insert?)
     // #[TODO: Better name]
-    pub(super) unsafe fn insert(&self, data: &[(CompId, *const u8)]) {
+    pub(super) unsafe fn queue_entity_insert(&self, data: &[(CompId, *const u8)]) {
         // extract
         let mut lock = self.ins.lock();
         let (len, cap, hmap) = &mut *lock;
 
         // extend capacities of the pending entity data if needed
-        // #UNTESTED
+        // #SORTA_UNTESTED
         if *len + 1 > *cap {
             let new_cap = (*len + 1) * 2;
             for (data_ptr, size) in hmap.values_mut() {
                 *data_ptr = realloc(
                     *data_ptr,
-                    Layout::from_size_align_unchecked(*cap * *size, 64),
+                    Layout::from_size_align_unchecked(*cap * *size, 8),
                     new_cap * *size,
                 );
             }
@@ -128,10 +138,15 @@ impl Bucket {
         *len += 1;
     }
 
-    pub(super) fn insert_pending(&mut self) {
+    pub(super) fn insert_pending_entities(&mut self) {
         // extract
         let lock = self.ins.get_mut();
         let (len, _, hmap) = &mut *lock;
+
+        // return early if no work needs to be done
+        if *len == 0 {
+            return;
+        }
 
         // extend capacities of the entity data if needed
         // #UNTESTED
@@ -141,7 +156,7 @@ impl Bucket {
                 unsafe {
                     *data_ptr = realloc(
                         *data_ptr,
-                        Layout::from_size_align_unchecked(self.cap * *size, 64),
+                        Layout::from_size_align_unchecked(self.cap * *size, 8),
                         new_cap * *size,
                     );
                 }
@@ -150,25 +165,22 @@ impl Bucket {
         }
 
         // drain
-        if *len > 0 {
-            // for each pair in pending insert hashmap
-            for (&comp_id, &mut (ins_ptr, size)) in hmap {
-                // get the data pointer in the cooresponding real data hashmap
-                let data_ptr = self.data.get_mut(&comp_id).expect("ERGAS").get_mut().0;
-
-                // drain all the data in the pending insert hashmap into the real hash map
-                unsafe {
-                    let src: *const u8 = ins_ptr;
-                    let dst: *mut u8 = data_ptr.add(self.len * size);
-                    let count = *len * size;
-                    copy(src, dst, count);
-                }
+        // for each pair in pending insert hashmap
+        let hmiter1 = self.data.values_mut().map(|lock| lock.get_mut());
+        let hmiter2 = hmap.values();
+        for (&mut data_lock, &(ins_ptr, size)) in hmiter1.zip(hmiter2) {
+            unsafe {
+                // move
+                let src: *const u8 = ins_ptr;
+                let dst: *mut u8 = data_lock.0.add(self.len * data_lock.1);
+                let count = *len * size;
+                copy_nonoverlapping(src, dst, count);
             }
-
-            // add the drained data len to the real len, set drained len to 0
-            self.len += *len;
-            *len = 0;
         }
+
+        // add the drained data len to the real len, set drained len to 0
+        self.len += *len;
+        *len = 0;
     }
 }
 
