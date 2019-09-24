@@ -254,37 +254,21 @@ fn id_set_creation() {
         id_set_builder.build(0)
     };
 
-    // key 0b01
-    let (ref key, ref set) = &id_set.data[0];
-    assert!(*key == Key::from_raw(0b01));
-    set.iter()
-        .zip(
-            vec![
-                Some(1),
-                Some(2),
-                Some(3),
-                Some(4),
-                Some(5),
-                Some(u32::max_value()),
-                None,
-            ]
-            .iter(),
-        )
-        .for_each(|(id1, id2)| assert!(*id1 == id2.unwrap()));
+    // the intended values
+    let mut correct_values_iter = vec![
+        (Key::from_raw(0b01), &[1u32, 2, 3, 4, 5][..]),
+        (Key::from_raw(0b10), &[3u32, 4, 5]),
+        (Key::from_raw(0b11), &[5u32, 6, 7]),
+    ]
+    .into_iter();
 
-    // key 0b01
-    let (ref key, ref set) = &id_set.data[1];
-    assert!(*key == Key::from_raw(0b10));
-    set.iter()
-        .zip(vec![Some(3), Some(4), Some(5), Some(u32::max_value()), None].iter())
-        .for_each(|(id1, id2)| assert!(*id1 == id2.unwrap()));
-
-    // key 0b01
-    let (ref key, ref set) = &id_set.data[2];
-    assert!(*key == Key::from_raw(0b11));
-    set.iter()
-        .zip(vec![Some(5), Some(6), Some(7), Some(u32::max_value()), None].iter())
-        .for_each(|(id1, id2)| assert!(*id1 == id2.unwrap()));
+    // test
+    id_set.for_each(|key, set| {
+        let (ckey, cset) = correct_values_iter.next().unwrap();
+        assert!(ckey == key);
+        assert!(cset == set);
+    });
+    assert!(correct_values_iter.next() == None);
 }
 
 #[test]
@@ -293,31 +277,22 @@ fn id_set_union_merge() {
     let (id_set0, id_set1) = {
         let mut id_set_builder = IdSetBuilder::new();
         id_set_builder
-            .push(Key::from_raw(0b001), vec![0, 2, 4, 6])
+            .push(Key::from_raw(0b01), vec![0, 2, 4, 6])
             .expect("Invalid order");
         id_set_builder
             .push(Key::from_raw(0b010), vec![1, 2, 3])
             .expect("Invalid order");
         id_set_builder
-            .push(Key::from_raw(0b011), vec![1, 2, 3, 4, 5, 6])
-            .expect("Invalid order");
-        id_set_builder
-            .push(Key::from_raw(0b100), vec![1, 2, 3])
+            .push(Key::from_raw(0b11), vec![1, 2, 3])
             .expect("Invalid order");
         let id_set0 = id_set_builder.build(0);
 
         let mut id_set_builder = IdSetBuilder::new();
         id_set_builder
-            .push(Key::from_raw(0b001), vec![1, 3, 5, 7])
+            .push(Key::from_raw(0b01), vec![1, 3, 5, 7])
             .expect("Invalid order");
         id_set_builder
-            .push(Key::from_raw(0b010), vec![1, 2, 3])
-            .expect("Invalid order");
-        id_set_builder
-            .push(Key::from_raw(0b011), vec![1, 2, 3])
-            .expect("Invalid order");
-        id_set_builder
-            .push(Key::from_raw(0b101), vec![4, 5, 6])
+            .push(Key::from_raw(0b10), vec![2, 3, 4, 5])
             .expect("Invalid order");
         let id_set1 = id_set_builder.build(0);
 
@@ -327,64 +302,62 @@ fn id_set_union_merge() {
     // union merge
     let merge = IdSet::from_union(&id_set0, &id_set1);
 
-    // key 0b01
-    let (ref key, ref set) = &merge.data[0];
-    assert!(*key == Key::from_raw(0b01));
-    set.iter()
-        .zip(
-            vec![
-                Some(0),
-                Some(1),
-                Some(2),
-                Some(3),
-                Some(4),
-                Some(5),
-                Some(6),
-                Some(7),
-                Some(u32::max_value()),
-                None,
-            ]
-            .iter(),
-        )
-        .for_each(|(id1, id2)| assert!(*id1 == id2.unwrap()));
+    // the intended values
+    let mut correct_values_iter = vec![
+        (Key::from_raw(0b01), &[0u32, 1, 2, 3, 4, 5, 6, 7][..]),
+        (Key::from_raw(0b10), &[1, 2, 3, 4, 5]),
+        (Key::from_raw(0b11), &[1, 2, 3]),
+    ]
+    .into_iter();
 
-    // key 0b10
-    let (ref key, ref set) = &merge.data[1];
-    assert!(*key == Key::from_raw(0b10));
-    set.iter()
-        .zip(vec![Some(1), Some(2), Some(3), Some(u32::max_value()), None].iter())
-        .for_each(|(id1, id2)| assert!(*id1 == id2.unwrap()));
+    // test
+    merge.for_each(|key, set| {
+        let (ckey, cset) = correct_values_iter.next().unwrap();
+        assert!(ckey == key);
+        assert!(cset == set);
+    });
+    assert!(correct_values_iter.next() == None);
+}
 
-    // key 0b11
-    let (ref key, ref set) = &merge.data[2];
-    assert!(*key == Key::from_raw(0b11));
-    set.iter()
-        .zip(
-            vec![
-                Some(1),
-                Some(2),
-                Some(3),
-                Some(4),
-                Some(5),
-                Some(6),
-                Some(u32::max_value()),
-                None,
-            ]
-            .iter(),
-        )
-        .for_each(|(id1, id2)| assert!(*id1 == id2.unwrap()));
+#[test]
+fn id_set_intersection_merge() {
+    // create 2 id sets
+    let (id_set0, id_set1) = {
+        let mut id_set_builder = IdSetBuilder::new();
+        id_set_builder
+            .push(Key::from_raw(0b01), vec![0, 2, 4, 6])
+            .expect("Invalid order");
+        id_set_builder
+            .push(Key::from_raw(0b010), vec![1, 2, 3])
+            .expect("Invalid order");
+        id_set_builder
+            .push(Key::from_raw(0b11), vec![1, 2, 3])
+            .expect("Invalid order");
+        let id_set0 = id_set_builder.build(0);
 
-    // key 0b100
-    let (ref key, ref set) = &merge.data[3];
-    assert!(*key == Key::from_raw(0b100));
-    set.iter()
-        .zip(vec![Some(1), Some(2), Some(3), Some(u32::max_value()), None].iter())
-        .for_each(|(id1, id2)| assert!(*id1 == id2.unwrap()));
+        let mut id_set_builder = IdSetBuilder::new();
+        id_set_builder
+            .push(Key::from_raw(0b01), vec![1, 3, 5, 7])
+            .expect("Invalid order");
+        id_set_builder
+            .push(Key::from_raw(0b10), vec![2, 3, 4, 5])
+            .expect("Invalid order");
+        let id_set1 = id_set_builder.build(0);
 
-    // key 0b101
-    let (ref key, ref set) = &merge.data[4];
-    assert!(*key == Key::from_raw(0b101));
-    set.iter()
-        .zip(vec![Some(4), Some(5), Some(6), Some(u32::max_value()), None].iter())
-        .for_each(|(id1, id2)| assert!(*id1 == id2.unwrap()));
+        (id_set0, id_set1)
+    };
+
+    // interesction merge
+    let merge = IdSet::from_intersection(&id_set0, &id_set1);
+
+    // the intended values
+    let mut correct_values_iter = vec![(Key::from_raw(0b10), &[2, 3])].into_iter();
+
+    // test
+    merge.for_each(|key, set| {
+        let (ckey, cset) = correct_values_iter.next().unwrap();
+        assert!(ckey == key);
+        assert!(cset == set);
+    });
+    assert!(correct_values_iter.next() == None);
 }
