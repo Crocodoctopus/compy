@@ -80,18 +80,16 @@ impl Compy {
 
     /// Performs
     pub fn remove(&mut self, id_set: &IdSet) {
-        if id_set.gen != self.gen {
+        if id_set.gen() != self.gen {
             panic!("TODO uhhh");
         }
 
         // delete
-        for (key, ids) in id_set.data.iter() {
-            // I hope this works
-            let bucket: &mut Bucket =
-                Arc::get_mut(self.buckets.get_mut().get_mut(&key).unwrap()).unwrap();
-            let len = ids.len();
-            bucket.remove(&ids[0..len - 1]);
-        }
+        id_set.for_each(|key, set| {
+            Arc::get_mut(self.buckets.get_mut().get_mut(&key).unwrap())
+                .unwrap()
+                .remove(&set);
+        });
 
         self.gen += 1;
     }
@@ -162,7 +160,7 @@ macro_rules! impl_compy_iterate {
             }
 
             fn iterate_ids_mut(&mut self, pkey: Key, nkey: Key, id_set: &IdSet, mut f: Func) -> ($($id_sets),*) {
-                if id_set.gen != self.gen {
+                if id_set.gen() != self.gen {
                     panic!("Oof");
                 }
 

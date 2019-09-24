@@ -35,8 +35,8 @@ impl IdSetBuilder {
 }
 
 pub struct IdSet {
-    pub(super) gen: usize,
-    pub(super) data: Vec<(Key, Arc<[u32]>)>,
+    gen: usize,
+    data: Vec<(Key, Arc<[u32]>)>,
 }
 
 impl IdSet {
@@ -134,6 +134,10 @@ impl IdSet {
             gen: idset0.gen,
             data,
         }
+    }
+
+    pub(super) fn gen(&self) -> usize {
+        self.gen
     }
 
     pub(super) fn for_each<F: FnMut(Key, &[u32])>(&self, mut f: F) {
