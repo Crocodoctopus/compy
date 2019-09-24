@@ -15,7 +15,7 @@ pub struct Bucket {
     // Bucket data
     len: usize,
     cap: usize,
-    pub(super) data: HashMap<CompId, RwLock<(*mut u8, usize)>>, // ptr, size
+    data: HashMap<CompId, RwLock<(*mut u8, usize)>>, // ptr, size
 
     // Entities pending insertion
     // Mutex<(len, cap, HashMap<id, (ptr, size)>)>
@@ -86,6 +86,10 @@ impl Bucket {
     // Pretty self explanatory
     pub(super) fn get_len(&self) -> usize {
         self.len
+    }
+
+    pub(super) fn get_component_count(&self) -> usize {
+        self.data.len()
     }
 
     // Remove elements from the Bucket. Note that indices must be in order of least to greatest

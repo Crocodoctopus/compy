@@ -100,7 +100,7 @@ impl Compy {
         let mut total_len = 0;
         for bucket in self.buckets.read().values() {
             bucket_count += 1;
-            total_components += bucket.data.len();
+            total_components += bucket.get_component_count();
             total_len += bucket.get_len();
         }
 
