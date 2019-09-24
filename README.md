@@ -1,3 +1,6 @@
+## What is Compy?
+Compy is a parallel component container intended for realtime simulations.
+
 ## What is ECS?
 ECS, or Entity-Component-System, is a design pattern useful for organizing the massive amounts of state found within a game. Briefly, ECS allows you to create **entites**, that are composed out unique **components** that describe behaviors, that is, **entities** may only have one of each component type. Example components might be Renderable, PlayerInputBehavior, Attackable, DropItemsOnDeath, and so on. **Systems** can vary from ECS to ECS, but in general are just a query for rounding up **entities** with a certain set of **components** and a loop that transforms each **entity** that matches said query. Hence, Entity-Component-System is not a system of entities and components, rather, its three concepts that work together to manage the state of your game. 
 
