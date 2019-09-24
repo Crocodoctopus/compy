@@ -3,7 +3,7 @@ ECS, or Entity-Component-System, is a design pattern useful for organizing the m
 
 Sometimes...
 
-##### What isn't an ECS?
+#### What isn't an ECS?
 ECS is not a silver bullet. They key to mastering ECS is understanding what it can't do. ECS specializes in **linearly** transforming a subset of entities where inter-entity communication isn't needed and order may not matter. In essence, ECS is for updating an entities "internal state", such as updating health via regen, or handling on death logic. ECS is a poor fit for physics and collision detection. That isn't to say collision logic can't be handled in an ECS, but detecting that two entities are colliding is not so elegant in an ECS. 
 
 ## Why Compy?
@@ -11,7 +11,7 @@ Given the section above, the goal of Compy is simply to be a non-intrusive ECS. 
 
 ## Usage
 
-##### Creation
+#### Creation
 ```Rust
 use compy::compy_builder::CompyBuilder;
 
@@ -29,7 +29,7 @@ let mut compy = CompyBuilder::new()
 ```
 Compy requires that users specify the components they will be using before the ``Compy`` object is constructed, done via the CompyBuilder type. Compy can handle both dataless types (tags) and data types.
 
-##### Insertion
+#### Insertion
 ```Rust
 use compy::compy::CompyInsertion;
 
@@ -41,7 +41,7 @@ The compy ``insert`` function takes a tuple of instantiated components, for whic
 compy.insert_all();
 ```
 
-##### Keys
+#### Keys
 Keys the 'datafication' of the types used by your ``Compy`` object, and are important for iteration, which will be covered in the next section.
 ```Rust
 let health = compy.get_key_for::<Health>();
@@ -55,7 +55,7 @@ Keys can be combined into groups using the ``+`` operator. Keys can be removed f
 let health_and_kozh = health + kill_on_zero_health;
 ```
 
-##### Iteration
+#### Iteration
 ```Rust
 use compy::key::Key;
 use compy::compy::CompyIterate;
@@ -68,7 +68,7 @@ Here we have a system that will regen the HP of all entities that contain both c
 
 **Note:** You don't need as many closure arguments as you have elements in the pkey group. If Regen had been a tag that assumes we regen 10% for all cases, the closure could have taken the form ``|hp: &mut Health| regen(hp, 0.10)`` as well. While the pkey must include every component in the closure, the closure does not need to include every component in the pkey. In fact, some closures will be totally empty!
 
-##### IdSets
+#### IdSets
 ```Rust
 use compy::key::Key;
 use compy::compy::CompyIterate;
@@ -93,7 +93,7 @@ let zero_and_full = IdSet::from_intersection(&zero_hp, &full_hp); // yes, this s
 Combining sets will be useful for the next two sections.
 
 
-##### Iteration with IdSets
+#### Iteration with IdSets
 ```Rust
 use compy::key::Key;
 use compy::compy::CompyIterate;
@@ -104,7 +104,7 @@ let dead = compy.iterate_ids(pkey, nkey, &zero_hp, || true);
 ```
 Iteration can be done on subsets of entities, as opposed to the entire entity space, via ``IdSet``s and ``iterate_ids``. The setup is exactly like ``iterate``, except that it takes an additional ``IdSet``. In this case, this system is iterating the entities with zero HP matched before that include the ``KillOnZeroHealth`` tag, and capturing all of them to get a set of entities that aught to be dead. 
 
-##### Removing entities
+#### Removing entities
 ```Rust
 compy.remove(dead);
 ```
