@@ -173,8 +173,12 @@ macro_rules! impl_compy_iterate {
                 $(let mut $id_set_names = IdSetBuilder::new();)*
 
                 // iterate
-                for (key, ids) in id_set.data.iter().filter(|(key, _)| key.contains(pkey) && key.excludes(nkey)) {
-                    let bucket: &mut Bucket = Arc::get_mut(self.buckets.get_mut().get_mut(&key).unwrap()).unwrap();
+                id_set.for_each(|key, set| {
+                    if !(key.contains(pkey) && key.excludes(nkey)) {
+                        return;
+                    }
+
+                    let bucket = &self.buckets.get_mut()[&key];
 
                     // get locks
                     $(let mut $arg_names = $args::try_lock(bucket, $arg_names).unwrap();)*
@@ -186,17 +190,15 @@ macro_rules! impl_compy_iterate {
                     $(let mut $vec_names = Vec::<u32>::with_capacity(_len);)*
 
                     // do the thing
-                    let last = ids.len() - 1;
-                    for index in 0..last {
-                        let index = ids[index] as usize;
+                    for id in set {
                         #[allow(unused_parens)]
-                        let ($($bool_names),*) = f($($args::get(&mut $arg_names, index as usize)),*);
-                        $(if $bool_names == true { $vec_names.push(index as u32); })*
+                        let ($($bool_names),*) = f($($args::get(&mut $arg_names, *id as usize)),*);
+                        $(if $bool_names == true { $vec_names.push(*id as u32); })*
                     }
 
                     // insert
-                    $($id_set_names.push(*key, $vec_names).unwrap();)*
-                }
+                    $($id_set_names.push(key, $vec_names).unwrap();)*
+                });
 
                 ($($id_set_names.build(self.gen)),*)
             }

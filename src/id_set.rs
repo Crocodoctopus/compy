@@ -135,6 +135,14 @@ impl IdSet {
             data,
         }
     }
+
+    pub(super) fn for_each<F: FnMut(Key, &[u32])>(&self, mut f: F) {
+        for (key, set) in &self.data {
+            let len = set.len();
+            let subset = &set[0..len - 1];
+            f(*key, subset);
+        }
+    }
 }
 
 fn union_merge(a0: &Arc<[u32]>, a1: &Arc<[u32]>) -> Arc<[u32]> {
