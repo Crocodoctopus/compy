@@ -119,7 +119,6 @@ impl Bucket {
         if *len + 1 > *cap {
             let new_cap = (*len + 1) * 2;
             for (data_ptr, size) in hmap.values_mut() {
-                println!("RESIZE");
                 *data_ptr = realloc(
                     *data_ptr,
                     Layout::from_size_align_unchecked(*cap * *size, 8),
@@ -142,7 +141,6 @@ impl Bucket {
     }
 
     pub(super) fn insert_pending_entities(&mut self) {
-        println!("Starting Bucket::insert_pending_entities");
         // extract
         let (src_len, _, src_hmap) = &mut *self.ins.get_mut();
 
@@ -157,7 +155,6 @@ impl Bucket {
             let new_cap = (self.len + *src_len) * 2;
             for (data_ptr, size) in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
                 unsafe {
-                    println!("RESIZE");
                     *data_ptr = realloc(
                         *data_ptr,
                         Layout::from_size_align_unchecked(self.cap * *size, 8),
@@ -183,8 +180,6 @@ impl Bucket {
         // add the drained data len to the real len, set drained len to 0
         self.len += *src_len;
         *src_len = 0;
-
-        println!("Leaving Bucket::insert_pending_entities");
     }
 }
 
