@@ -50,7 +50,7 @@ impl Bucket {
     pub(super) fn new(key: Key, compid_to_size: &HashMap<CompId, usize>) -> Self {
         // some starting parameters
         let bucket_len = 0;
-        let bucket_cap = 32;
+        let bucket_cap = 100_000;
 
         // construct the data/ins hashmaps
         let mut data = HashMap::new();
@@ -112,14 +112,14 @@ impl Bucket {
     // #[TODO: Better name]
     pub(super) unsafe fn queue_entity_insert(&self, data: &[(CompId, *const u8)]) {
         // extract
-        let mut lock = self.ins.lock();
-        let (len, cap, hmap) = &mut *lock;
+        let (len, cap, hmap) = &mut *self.ins.lock();
 
         // extend capacities of the pending entity data if needed
         // #SORTA_UNTESTED
         if *len + 1 > *cap {
             let new_cap = (*len + 1) * 2;
             for (data_ptr, size) in hmap.values_mut() {
+                println!("RESIZE");
                 *data_ptr = realloc(
                     *data_ptr,
                     Layout::from_size_align_unchecked(*cap * *size, 8),
@@ -130,36 +130,34 @@ impl Bucket {
         }
 
         // insert
-        data.iter()
-            .filter_map(|(comp_id, src_ptr)| {
-                hmap.get(comp_id)
-                    .and_then(|(dst_ptr, size)| Some((src_ptr, dst_ptr, size)))
-            })
-            .for_each(|(&src_ptr, &dst_ptr, &size)| {
-                let src: *const u8 = src_ptr;
+        for (comp_id, src_ptr) in data {
+            if let Some((dst_ptr, size)) = hmap.get(comp_id) {
+                let src: *const u8 = *src_ptr;
                 let dst: *mut u8 = dst_ptr.add(*len * size);
-                let count = size;
+                let count = *size;
                 copy_nonoverlapping(src, dst, count);
-            });
+            }
+        }
         *len += 1;
     }
 
     pub(super) fn insert_pending_entities(&mut self) {
+        println!("Starting Bucket::insert_pending_entities");
         // extract
-        let lock = self.ins.get_mut();
-        let (len, _, hmap) = &mut *lock;
+        let (src_len, _, src_hmap) = &mut *self.ins.get_mut();
 
         // return early if no work needs to be done
-        if *len == 0 {
+        if *src_len == 0 {
             return;
         }
 
         // extend capacities of the entity data if needed
         // #UNTESTED
-        if self.len + *len > self.cap {
-            let new_cap = (self.len + *len) * 2;
+        if self.len + *src_len > self.cap {
+            let new_cap = (self.len + *src_len) * 2;
             for (data_ptr, size) in self.data.iter_mut().map(|(_, rw)| rw.get_mut()) {
                 unsafe {
+                    println!("RESIZE");
                     *data_ptr = realloc(
                         *data_ptr,
                         Layout::from_size_align_unchecked(self.cap * *size, 8),
@@ -172,21 +170,21 @@ impl Bucket {
 
         // drain
         // for each pair in pending insert hashmap
-        let hmiter1 = self.data.values_mut().map(|lock| lock.get_mut());
-        let hmiter2 = hmap.values();
-        for (&mut data_lock, &(ins_ptr, size)) in hmiter1.zip(hmiter2) {
+        for (src_key, src_pair) in src_hmap.iter() {
+            let dst_pair = self.data.get_mut(src_key).unwrap().get_mut();
             unsafe {
-                // move
-                let src: *const u8 = ins_ptr;
-                let dst: *mut u8 = data_lock.0.add(self.len * data_lock.1);
-                let count = *len * size;
+                let src: *const u8 = src_pair.0;
+                let dst: *mut u8 = dst_pair.0.add(dst_pair.1 * self.len);
+                let count = *src_len * src_pair.1;
                 copy_nonoverlapping(src, dst, count);
             }
         }
 
         // add the drained data len to the real len, set drained len to 0
-        self.len += *len;
-        *len = 0;
+        self.len += *src_len;
+        *src_len = 0;
+
+        println!("Leaving Bucket::insert_pending_entities");
     }
 }
 
@@ -211,7 +209,7 @@ impl<T: 'static> Lock for &T {
     }
 
     fn try_lock<'a>(bucket: &'a Bucket, comp_id: CompId) -> Option<Self::Lock> {
-        let read = bucket.data.get(&comp_id).expect("ERROR").try_read()?;
+        let read = bucket.data.get(&comp_id).expect("Unreachable").try_read()?;
         let read = RwLockReadGuard::map(read, |(ptr, _)| ptr);
 
         let out: MappedRwLockReadGuard<'a, *mut u8> = read;
@@ -233,7 +231,7 @@ impl<T: 'static> Lock for &mut T {
     }
 
     fn try_lock<'a>(bucket: &'a Bucket, comp_id: CompId) -> Option<Self::Lock> {
-        let write = bucket.data.get(&comp_id).expect("ERROR").try_write()?;
+        let write = bucket.data.get(&comp_id).expect("Unreachable").try_write()?;
         let write = RwLockWriteGuard::map(write, |(ptr, _)| ptr);
 
         let out: MappedRwLockWriteGuard<'a, *mut u8> = write;

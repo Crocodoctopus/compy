@@ -235,6 +235,7 @@ impl_compy_iterate! {(aa, A, ab, B, ac, C, ad, D, ae, E, af, F), (ba, bool, bb, 
 /// Overloadable function for inserting entities
 pub trait CompyInsert<T> {
     fn insert(&self, t: T);
+    fn multi_insert<Func: FnMut(&mut FnMut(T))>(&self, f: Func);
 }
 
 macro_rules! impl_compy_insert {
@@ -253,6 +254,23 @@ macro_rules! impl_compy_insert {
                     bucket.queue_entity_insert(&[$( ($t_names, &t.$vs as *const _ as * const _), )*]);
                     std::mem::forget(t);
                 }
+            }
+
+            fn multi_insert<Func: FnMut(&mut FnMut(($($ts,)*)))>(&self, mut f: Func) {
+                // generate key from parts
+                $(let $t_names = self.typeid_to_compid[&TypeId::of::<$ts>()];)*
+                let key = Key::default() $(+ $t_names)*;
+
+                // get bucket of said key
+                let bucket = self.get_bucket_or_make(key);
+
+                // insert
+                let mut inner = |tup: ($($ts,)*)| { unsafe {
+                    bucket.queue_entity_insert(&[$( ($t_names, &tup.$vs as *const _ as * const _), )*]);
+                    std::mem::forget(tup);
+                }};
+
+                f(&mut inner);
             }
         }
     }
